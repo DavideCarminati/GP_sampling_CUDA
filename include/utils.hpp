@@ -1,10 +1,11 @@
-#ifndef MH_SAMPLER
-#define MH_SAMPLER
+#ifndef UTILS
+#define UTILS
 #include <Eigen/Core>
 #include <Eigen/Dense>
 #include <cuda.h>
 #include <curand.h>
 #include <cuda_runtime.h>
+#include <curand_kernel.h>
 
 #include <cmath>
 #include <functional>
@@ -16,8 +17,7 @@
 #include <cuComplex.h>
 #include <cuda_runtime_api.h>
 
-#include "utils.hpp"
-/*
+
 // CUDA API error checking
 #define CUDA_CHECK(err)                                                                            \
     do {                                                                                           \
@@ -31,6 +31,7 @@
 #define CURAND_CHECK(x) do { if((x)!=CURAND_STATUS_SUCCESS) { \
     printf("Error at %s:%d\n",__FILE__,__LINE__);\
     return EXIT_FAILURE;}} while(0)
+
 
 using namespace Eigen;
 
@@ -50,20 +51,32 @@ struct Data
 struct MHoptions
 {   
     int burnin, max_iterations, store_after;
-};*/
+};
 
-MatrixXd MHsampler(Data &data, Distribution &prior, Distribution &likelihood, Distribution &proposal, MHoptions opts);
+struct PToptions
+{   
+    int burnin, max_iterations, store_after;
+    VectorXd temperature;
+};
 
-/*
 VectorXd uniform_sampler(curandGenerator_t &gen, int num_samples);
 // VectorXd uniform_sampler(curandGenerator_t &gen, cudaStream_t stream, int num_samples);
 VectorXd uniform_sampler_double(curandGenerator_t &gen, int num_samples);
+
+VectorXi uniform_integer_sampler(curandGenerator_t &gen, int num_samples);
+VectorXi uniform_integer_sampler_double(curandGenerator_t &gen, int num_samples);
 
 VectorXd mvn_sampler(curandGenerator_t &gen, int num_samples, VectorXd &mean, MatrixXd &cov);
 VectorXd mvn_sampler_double(curandGenerator_t &gen, int num_samples, VectorXd &mean, MatrixXd &cov);
 
 VectorXd uni_to_multivariate(const VectorXf &random_samples, const VectorXd &mean, const MatrixXd &cov);
 VectorXd uni_to_multivariate_double(const VectorXd &random_samples, const VectorXd &mean, const MatrixXd &cov);
-*/
+
+__global__ 
+void generate_kernel(curandState *my_curandstate, const unsigned int n, const unsigned *max_rand_int, const unsigned *min_rand_int,  unsigned int *result);
+
+__global__ 
+void setup_kernel(curandState *state);
+
 
 #endif

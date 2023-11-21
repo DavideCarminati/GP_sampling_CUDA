@@ -2,7 +2,7 @@
 
 // using namespace Eigen;
 
-
+/*
 VectorXd mvn_sampler(curandGenerator_t &gen, int num_samples, VectorXd &mean, MatrixXd &cov)
 {
     // Multivariate normal sampler using cuRAND
@@ -78,7 +78,7 @@ VectorXd uni_to_multivariate_double(const VectorXd &random_samples, const Vector
     MatrixXd L = cov.llt().matrixL();
     VectorXd out = mean + L * random_samples;
     return out;
-}
+}*/
 
 MatrixXd MHsampler(Data &data, Distribution &prior, Distribution &likelihood, Distribution &proposal, MHoptions opts)
 {
