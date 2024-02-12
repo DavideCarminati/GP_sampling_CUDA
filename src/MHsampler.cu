@@ -1,84 +1,5 @@
 #include "MHsampler.hpp"
 
-// using namespace Eigen;
-
-/*
-VectorXd mvn_sampler(curandGenerator_t &gen, int num_samples, VectorXd &mean, MatrixXd &cov)
-{
-    // Multivariate normal sampler using cuRAND
-
-    float *samples;
-    CUDA_CHECK(cudaMalloc((void**)&samples, sizeof(float) * num_samples));
-    curandGenerateNormal(gen, samples, num_samples, 0.0, 1.0);
-
-    VectorXf rand_data(num_samples);
-    CUDA_CHECK(cudaMemcpy(rand_data.data(), samples, sizeof(float) * num_samples, cudaMemcpyDeviceToHost));
-
-    // Sample from the multivariate normal
-    LLT<MatrixXd> llt_dec(cov);
-    MatrixXd L = cov.llt().matrixL();
-    VectorXd out = mean + L * rand_data.cast<double>();
-    return out;
-};
-
-VectorXd mvn_sampler_double(curandGenerator_t &gen, int num_samples, VectorXd &mean, MatrixXd &cov)
-{
-    // Multivariate normal sampler using cuRAND
-
-    double *samples;
-    CUDA_CHECK(cudaMalloc((void**)&samples, sizeof(double) * num_samples));
-    curandGenerateNormalDouble(gen, samples, num_samples, 0.0, 1.0);
-
-    VectorXd rand_data(num_samples);
-    CUDA_CHECK(cudaMemcpy(rand_data.data(), samples, sizeof(double) * num_samples, cudaMemcpyDeviceToHost));
-
-    // Sample from the multivariate normal
-    LLT<MatrixXd> llt_dec(cov);
-    MatrixXd L = cov.llt().matrixL();
-    VectorXd out = mean + L * rand_data;
-    return out;
-};
-
-VectorXd uniform_sampler(curandGenerator_t &gen, int num_samples)
-{
-    float *samples;
-    CUDA_CHECK(cudaMalloc((void**)&samples, sizeof(float) * num_samples));
-    curandGenerateUniform(gen, samples, num_samples);
-
-    VectorXf rand_data(num_samples);
-    CUDA_CHECK(cudaMemcpy(rand_data.data(), samples, sizeof(float) * num_samples, cudaMemcpyDeviceToHost));
-    // CUDA_CHECK(cudaMemcpyAsync(rand_data.data(), samples, sizeof(float) * num_samples, cudaMemcpyDeviceToHost, stream));
-    return rand_data.cast<double>();
-}
-
-VectorXd uniform_sampler_double(curandGenerator_t &gen, int num_samples)
-{
-    double *samples;
-    CUDA_CHECK(cudaMalloc((void**)&samples, sizeof(double) * num_samples));
-    curandGenerateUniformDouble(gen, samples, num_samples);
-
-    VectorXd rand_data(num_samples);
-    CUDA_CHECK(cudaMemcpy(rand_data.data(), samples, sizeof(double) * num_samples, cudaMemcpyDeviceToHost));
-    // CUDA_CHECK(cudaMemcpyAsync(rand_data.data(), samples, sizeof(float) * num_samples, cudaMemcpyDeviceToHost, stream));
-    return rand_data;
-}
-
-
-VectorXd uni_to_multivariate(const VectorXf &random_samples, const VectorXd &mean, const MatrixXd &cov)
-{
-    LLT<MatrixXd> llt_dec(cov);
-    MatrixXd L = cov.llt().matrixL();
-    VectorXd out = mean + L * random_samples.cast<double>();
-    return out;
-}
-
-VectorXd uni_to_multivariate_double(const VectorXd &random_samples, const VectorXd &mean, const MatrixXd &cov)
-{
-    LLT<MatrixXd> llt_dec(cov);
-    MatrixXd L = cov.llt().matrixL();
-    VectorXd out = mean + L * random_samples;
-    return out;
-}*/
 
 MatrixXd MHsampler(Data &data, Distribution &prior, Distribution &likelihood, Distribution &proposal, MHoptions opts)
 {
@@ -147,7 +68,7 @@ MatrixXd MHsampler(Data &data, Distribution &prior, Distribution &likelihood, Di
                     0.5 / sigma_n * pow((data.y_train - f).array(), 2).sum();
 
         double acceptanceProb = lh_new - lh_old;
-        if (min(acceptanceProb, 0.0 ) > acceptanceThr(i))
+        if (std::min(acceptanceProb, 0.0 ) > acceptanceThr(i))
         {
             f = fnew;
             accepted_samples++;

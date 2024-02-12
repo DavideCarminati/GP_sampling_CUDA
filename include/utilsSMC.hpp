@@ -20,30 +20,6 @@
 
 using namespace Eigen;
 
-struct Distribution
-{
-    VectorXd mean;
-    MatrixXd covariance;
-    // std::function<VectorXd(VectorXd, VectorXd, MatrixXd)> pdf;
-    // std::function<VectorXd(double, VectorXd, MatrixXd)> sampler;
-};
-
-struct Data
-{
-    VectorXd x_train, y_train;
-};
-
-struct MHoptions
-{   
-    int burnin, max_iterations, store_after;
-};
-
-struct PToptions
-{   
-    int burnin, max_iterations, store_after;
-    VectorXd temperature;
-};
-
 __host__ __device__
 MatrixXd computeKernel( Eigen::MatrixXd x1,
                         Eigen::MatrixXd x2, 
@@ -51,8 +27,11 @@ MatrixXd computeKernel( Eigen::MatrixXd x1,
                         const double length_scale
                         );
 __device__
-void cuCholesky(const MatrixXd &A, MatrixXd &L);
+void cuCholesky(const double *A, const int lda, double *L);
 
+__device__
+void threadBlockDeviceSynchronize(void);
+/*
 VectorXd uniform_sampler(curandGenerator_t &gen, int num_samples);
 // VectorXd uniform_sampler(curandGenerator_t &gen, cudaStream_t stream, int num_samples);
 VectorXd uniform_sampler_double(curandGenerator_t &gen, int num_samples);
@@ -71,6 +50,6 @@ void generate_kernel(curandState *my_curandstate, const unsigned int n, const un
 
 __global__ 
 void setup_kernel(curandState *state);
-
+*/
 
 #endif

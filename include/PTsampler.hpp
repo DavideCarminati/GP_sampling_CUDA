@@ -16,6 +16,7 @@
 #include <cuComplex.h>
 #include <cuda_runtime_api.h>
 #include "utils.hpp"
+#include "cu_utils.hpp"
 
 using namespace Eigen;
 

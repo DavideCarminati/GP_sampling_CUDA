@@ -17,6 +17,7 @@
 #include <cuda_runtime_api.h>
 
 #include "utils.hpp"
+#include "cu_utils.hpp"
 /*
 // CUDA API error checking
 #define CUDA_CHECK(err)                                                                            \

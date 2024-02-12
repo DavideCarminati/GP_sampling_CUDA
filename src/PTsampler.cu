@@ -1,6 +1,4 @@
-#include "MHsampler.hpp"
-
-// using namespace Eigen;
+#include "PTsampler.hpp"
 
 
 std::vector<MatrixXd> PTsampler(Data &data, Distribution &prior, Distribution &likelihood, Distribution &proposal, PToptions opts)
@@ -17,88 +15,133 @@ std::vector<MatrixXd> PTsampler(Data &data, Distribution &prior, Distribution &l
     std::uniform_int_distribution<int> unif_dist(0, T - 1);
     std::uniform_real_distribution<double> unif_real_dist(0.0, 1.0);
 
-    // cudaStream_t stream_1;
-    // cudaStreamCreate(&stream_1);
-
     // double *samples;
     float *samples;
-    // cudaMalloc((void**)samples, sizeof(float) * data.x_train.size() * opts.max_iterations);
-    // CUDA_CHECK(cudaMalloc((void**)&samples, sizeof(double) * N * (opts.max_iterations + opts.burnin)));
-    CUDA_CHECK(cudaMalloc((void**)&samples, sizeof(float) * N * (opts.max_iterations + opts.burnin) * T));
     curandCreateGenerator(&gen, CURAND_RNG_PSEUDO_DEFAULT);
-    curandSetPseudoRandomGeneratorSeed(gen, rand() * 25ULL /*1234ULL*/);
+    curandSetPseudoRandomGeneratorSeed(gen, 26ULL /*1234ULL*/);
+    CUDA_CHECK(cudaMalloc((void**)&samples, sizeof(float) * N * (opts.max_iterations + opts.burnin) * T));
     curandStatus_t status = curandGenerateNormal(gen, samples, N * (opts.max_iterations + opts.burnin) * T, 0.0, 1.0);
-    // curandStatus_t status = curandGenerateNormalDouble(gen, samples, N * (opts.max_iterations + opts.burnin), 0.0, 1.0);
     std::cout << "curand status: " << status << std::endl;
 
-    // VectorXd rand_data(N * (opts.max_iterations + opts.burnin));
     VectorXf rand_data(N * (opts.max_iterations + opts.burnin) * T);
-    // CUDA_CHECK(cudaMemcpy(rand_data.data(), samples, sizeof(double) * N * (opts.max_iterations + opts.burnin), cudaMemcpyDeviceToHost));
     CUDA_CHECK(cudaMemcpy(rand_data.data(), samples, sizeof(float) * N * (opts.max_iterations + opts.burnin) * T, cudaMemcpyDeviceToHost));
+    // Map<VectorXf> rand_data(h_samples, N * (opts.max_iterations + opts.burnin) * T);
+    CUDA_CHECK(cudaFree(samples));
 
     // Sample from the normal prior dist for each temperature
     float *samples_for_prior;
-    CUDA_CHECK(cudaMalloc((void**)&samples_for_prior, sizeof(float) * N * T));
-    curandGenerateNormal(gen, samples, N * T, 0.0, 1.0);
     MatrixXf rand_data_for_prior(T, N);
-    CUDA_CHECK(cudaMemcpy(rand_data_for_prior.data(), samples, sizeof(float) * N * T, cudaMemcpyDeviceToHost));
-    // MatrixXd f = mvn_sampler(gen, N * T, prior.mean, prior.covariance);
-    // VectorXd f = mvn_sampler_double(gen, N, prior.mean, prior.covariance);
-    // VectorXd f = prior.mean + prior.covariance.llt().matrixL() * rand_data.cast<double>();
+    CUDA_CHECK(cudaMalloc((void**)&samples_for_prior, sizeof(float) * N * T));
+    CURAND_CHECK(curandGenerateNormal(gen, samples_for_prior, N * T, 0.0, 1.0));
+    CUDA_CHECK(cudaMemcpy(rand_data_for_prior.data(), samples_for_prior, sizeof(float) * N * T, cudaMemcpyDeviceToHost));
+    // Map<MatrixXf> rand_data_for_prior(h_samples_for_prior, T, N);
+    std::cout << rand_data_for_prior << std::endl;
+    CUDA_CHECK(cudaFree(samples_for_prior));
 
     // Sample all the acceptance thresholds
-    // VectorXd acceptanceThr = log(ArrayXd::Zero(opts.max_iterations + opts.burnin, 1).unaryExpr([&](double dummy){return unif_real_dist(h_gen);}));
     VectorXd acceptanceThr = log(uniform_sampler(gen, T * (opts.max_iterations + opts.burnin)).array());
-    // VectorXd acceptanceThr = log(uniform_sampler_double(gen, opts.max_iterations + opts.burnin).array());
 
+    // Create samples for hyperparameter prior
+    float *samples_for_hyp_prior;
+    MatrixXf rand_data_for_hyp_prior(T * (opts.max_iterations + opts.burnin), 2);
+    CUDA_CHECK(cudaMalloc((void**)&samples_for_hyp_prior, sizeof(float) * 2 * T * (opts.max_iterations + opts.burnin)));
+    CURAND_CHECK(curandGenerateNormal(gen, samples_for_hyp_prior, 2 * T * (opts.max_iterations + opts.burnin), 0.0, 1.0));
+    CUDA_CHECK(cudaMemcpy(rand_data_for_hyp_prior.data(), samples_for_hyp_prior, sizeof(float) * 2 * T * (opts.max_iterations + opts.burnin), cudaMemcpyDeviceToHost));
+    // Map<MatrixXf> rand_data_for_hyp_prior(h_samples_for_hyp_prior, T, 2);
+    std::cout << rand_data_for_hyp_prior.bottomRows(10) << std::endl;
+    // CUDA_CHECK(cudaFree(samples_for_hyp_prior));
+
+    // Sample all the acceptance thresholds for hyperparameters
+    VectorXd acceptanceThr_hyp = log(uniform_sampler(gen, T * (opts.max_iterations + opts.burnin)).array());
+
+    // Allocate matrices
     int accepted_samples = 0, exchanged_samples = 0;
     int idx = 0;
     std::vector<MatrixXd> PTsamples(T, MatrixXd::Zero((int)floor(opts.max_iterations / opts.store_after), N));
     // MatrixXd PTsamples((int)floor(opts.max_iterations / opts.store_after), N);
-    double sigma_n = likelihood.covariance(0,0);
+    double sigma2_n = likelihood.covariance(0,0);
     MatrixXd f = MatrixXd::Zero(T, N);
     VectorXd lh_at_each_t(T);
 
-    // // Log likelihood of a Gamma distribution
-    // auto LH_gamma = [](VectorXd f)
-    // {
-    //     double alpha = 4.0; double beta = 20.0;
-    //     int N = f.size();
-    //     return alpha * log(beta) * N - N * log(tgamma(alpha)) + (alpha - 1) * f.array().log().sum() - beta * f.array().sum();
-    // };
+    // Log Likelihood for hyperparameter training
+    auto LH_hyp = [&data](MatrixXd cov)
+    {
+        double N = data.x_train.rows();
+        return -0.5 * log(pow(2 * M_PI, N) * cov.determinant()) - 0.5 * data.x_train.transpose() * cov.inverse() * data.x_train;
+    };
 
-    std::cout << "Iteration:\n";
+    // Initialize old likelihood for hyperparameters
+    VectorXd LH_old_hyp(T), lh_old(T);
+    MatrixXd theta(T, 2);
+    std::vector<MatrixXd> K_old_all_t(T, MatrixXd::Zero(N, N));
+    Distribution proposal_at_each_t[T];
+    MatrixXd K_old = computeKernel(data.x_train, data.x_train, exp(0.0), exp(0.0));
+    for (int t = 0; t < T; t++)
+    {
+        K_old_all_t[t] = K_old;
+        LH_old_hyp(t) = LH_hyp(K_old);
+        proposal_at_each_t[t].covariance = K_old;
+        // Initialize old likelihood for posterior
+        f.row(t) = uni_to_multivariate(rand_data_for_prior.row(t), prior.mean, prior.covariance);
+        lh_old(t) = -0.5 * log( pow(2 * M_PI, N) * sigma2_n) - 
+                        0.5 / sigma2_n * pow((data.y_train - f.row(t).transpose()).array(), 2).sum();
+    }
+
+    
+
+    std::cout << "Progress:\n";
     for (int i = 0; i < opts.max_iterations + opts.burnin; i++)
     {
+        // if ( i % (int)(opts.max_iterations / 100) == 0 || i == 0 )
+        // {
+        //     printf("\033[2K\r");
+        //     int progress = (i / (opts.max_iterations + opts.burnin) * 10);
+        //     std::cout << "[" + std::string(progress, '=') + \
+        //             std::string(10 - progress, ' ') + "]";
+        // }
         // For each temperature
         #pragma omp parallel for shared(f, lh_at_each_t)
         for (int t = 0; t < T; t++)
         {
-            if (i == 0)
+            /**
+             * SAMPLE THE HYPERPARAMETERS
+            */
+            // Hyperparameters are all sampled outside this loop. We just need to update the kernel
+            VectorXd theta_new = exp(rand_data_for_hyp_prior.row(t + i*T).array().cast<double>());
+            MatrixXd K_new = computeKernel(data.x_train, data.x_train, theta_new(0), theta_new(1));
+            // Compute new log(p(f|theta_new))
+            double LH_new_hyp = LH_hyp(K_new + MatrixXd::Identity(N, N) * 1e-6);
+            // Compute acceptance probability and accept/reject
+            if ( std::min(LH_new_hyp - LH_old_hyp(t), 0.0) > acceptanceThr_hyp(t + i*T) )
             {
-                f.row(t) = uni_to_multivariate(rand_data_for_prior.row(t), prior.mean, prior.covariance);
+                proposal_at_each_t[t].covariance = K_new + MatrixXd::Identity(N,N) * 1e-9;
+                LH_old_hyp(t) = LH_new_hyp;
+                theta.row(t) = theta_new.transpose();
             }
-            // VectorXd fnew = mvn_sampler(gen, N, proposal.mean, proposal.covariance);
-            VectorXd fnew = uni_to_multivariate(rand_data.segment(i*N + t*N, N), proposal.mean, proposal.covariance);
+
+            /**
+             * SAMPLE THE POSTERIOR
+            */
+            VectorXd fnew = uni_to_multivariate(rand_data.segment(i*N + t*N, N), proposal.mean, proposal_at_each_t[t].covariance);
             // VectorXd fnew = uni_to_multivariate_double(rand_data.segment(i*N, N), proposal.mean, proposal.covariance);
             
             // Evaluate likelihoods
-            double lh_new = -0.5 * N * log( 2 * M_PI * sigma_n) - 
-                        0.5 / sigma_n * pow((data.y_train - fnew).array(), 2).sum();
+            double lh_new = -0.5 * log( pow(2 * M_PI, N) * sigma2_n) - 
+                        0.5 / sigma2_n * pow((data.y_train - fnew).array(), 2).sum();
             // double lh_new = LH_gamma(fnew);
 
-            double lh_old = -0.5 * N * log( 2 * M_PI * sigma_n) - 
-                        0.5 / sigma_n * pow((data.y_train - f.row(t).transpose()).array(), 2).sum();
+            // double lh_old = -0.5 * N * log( 2 * M_PI * sigma2_n) - 
+            //             0.5 / sigma2_n * pow((data.y_train - f.row(t).transpose()).array(), 2).sum();
 
-            double acceptanceProb = lh_new - lh_old;
-            if (min(acceptanceProb, 0.0 ) > acceptanceThr(t + i*t))
+            double acceptanceProb = lh_new - lh_old(t);
+            if (std::min(acceptanceProb, 0.0 ) > acceptanceThr(t + i*T))
             {
                 f.row(t) = fnew.transpose();
                 accepted_samples++;
                 // printf("+");
-                lh_old = lh_new;
+                lh_old(t) = lh_new;
             }
-            lh_at_each_t(t) = lh_old;
+            lh_at_each_t(t) = lh_old(t);
         }
 
         // std::cout << "LH at each temp:\n" << lh_at_each_t << std::endl;
@@ -120,12 +163,21 @@ std::vector<MatrixXd> PTsampler(Data &data, Distribution &prior, Distribution &l
             // ArrayXd r2 = pow(f.row(p).array() / f.row(q).array(), 1 / opts.temperature(q));
             // double alpha_ladder = min(1.0, (r1*r2).maxCoeff());
             // double alpha_ladder = min(1.0, (r1*r2));
-            double alpha_ladder = min(0.0, (r1 + r2));
+            double alpha_ladder = std::min(0.0, (r1 + r2));
             if (alpha_ladder < log(unif_real_dist(h_gen)))
             {
                 VectorXd tmp = f.row(q).transpose();
                 f.row(q) = f.row(p);
                 f.row(p) = tmp.transpose();
+                // Exchange hyperparameters as well
+                tmp.resize(2);
+                tmp = theta.row(q).transpose();
+                theta.row(q) = theta.row(p);
+                theta.row(p) = tmp.transpose();
+                // And kernels
+                MatrixXd tmp_mat = proposal_at_each_t[q].covariance;
+                proposal_at_each_t[q].covariance = proposal_at_each_t[p].covariance;
+                proposal_at_each_t[p].covariance = tmp_mat;
                 exchanged_samples++;
             }
             
@@ -139,7 +191,7 @@ std::vector<MatrixXd> PTsampler(Data &data, Distribution &prior, Distribution &l
             }
             idx++;
         }
-        // printf("\e[1K\e[1G%d", i);
+        printf("\e[1K\e[1G%d", i);
         // std::cout << "Iteration " << i;
         
     }

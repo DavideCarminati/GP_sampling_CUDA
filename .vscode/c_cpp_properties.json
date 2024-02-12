@@ -3,14 +3,16 @@
         {
             "name": "Linux",
             "includePath": [
-                "${workspaceFolder}/**"
+                "${workspaceFolder}/**",
+                "${workspaceFolder}/include"
             ],
             "defines": [],
-            "compilerPath": "/usr/local/cuda-11.2/bin/gcc",
-            "cStandard": "c17",
-            "cppStandard": "gnu++14",
+            "compilerPath": "/usr/bin/gcc",
+            "cStandard": "gnu17",
+            "cppStandard": "gnu++11",
             "configurationProvider": "ms-vscode.cmake-tools",
-            "compileCommands": "${workspaceFolder}/build/compile_commands.json"
+            "compileCommands": "${workspaceFolder}/build/compile_commands.json",
+            "intelliSenseMode": "linux-gcc-x64"
         }
     ],
     "version": 4

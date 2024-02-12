@@ -1,4 +1,4 @@
-#include "utils.hpp"
+#include "utilsSMC.hpp"
 
 __host__ __device__
 MatrixXd computeKernel( Eigen::MatrixXd x1,
@@ -7,12 +7,6 @@ MatrixXd computeKernel( Eigen::MatrixXd x1,
                         const double length_scale
                         )
 {
-    // Checking input size
-    if (x1.cols() != x2.cols()) 
-    {
-        throw std::invalid_argument("x1 and x2 must have the same number of columns");
-    }
-
     double l = length_scale;
 
     MatrixXd kernel(x1.rows(), x2.rows()); // Initialize kernel matrix
@@ -26,54 +20,39 @@ MatrixXd computeKernel( Eigen::MatrixXd x1,
     return kernel.matrix();
 };
 
-// __device__
-// void cuComputeKernel(   Eigen::MatrixXd x1,
-//                         Eigen::MatrixXd x2, 
-//                         const double amplitude, 
-//                         const double length_scale,
-//                         MatrixXd kernel
-//                         )
-// {
-//     // Checking input size
-//     if (x1.cols() != x2.cols()) 
-//     {
-//         throw std::invalid_argument("x1 and x2 must have the same number of columns");
-//     }
-
-//     double l = length_scale;
-
-//     kernel.resize(x1.rows(), x2.rows()); // Initialize kernel matrix
-//     for (int ii = 0; ii < x1.rows(); ii++)
-//     {
-//         for (int jj = 0; jj < x2.rows(); jj++)
-//         {
-//             kernel(ii,jj) = amplitude * amplitude * exp( -0.5 / l / l * (x1.row(ii) - x2.row(jj)) * (x1.row(ii) - x2.row(jj)).transpose() );
-//         }
-//     }
-// };
-
 /**
  * Naïve Cholesky decomposition for GPU
 */
 __device__
-void cuCholesky(const MatrixXd &A, MatrixXd &L)
+void cuCholesky(const double *A, const int lda, double *L)
 {
-    for (int i = 0; i < A.rows(); i++) 
+    Map<MatrixXd> L_mat(L, lda, lda);
+    Map<const::MatrixXd> A_mat(A, lda, lda);
+    for (int i = 0; i < lda; i++) 
     {
         for (int j = 0; j <= i; j++) 
         {
             double sum = 0;
             for (int k = 0; k < j; k++)
-                sum += L(i, k) * L(j, k);
+                sum += L_mat(i, k) * L_mat(j, k);
 
             if (i == j)
-                L(i, j) = sqrt(A(i, i) - sum);
+                L_mat(i, j) = sqrt(A_mat(i, i) - sum);
             else
-                L(i, j) = (1.0 / L(j, j) * (A(i, j) - sum));
+                L_mat(i, j) = (1.0 / L_mat(j, j) * (A_mat(i, j) - sum));
         }   
     }
 }
 
+__device__
+void threadBlockDeviceSynchronize(void) 
+{
+//   __syncthreads();
+//   if(threadIdx.x == 0)
+//     cudaDeviceSynchronize();
+//   __syncthreads();
+}
+/*
 VectorXd mvn_sampler(curandGenerator_t &gen, int num_samples, VectorXd &mean, MatrixXd &cov)
 {
     // Multivariate normal sampler using cuRAND
@@ -180,3 +159,4 @@ void generate_kernel(curandState *my_curandstate, const unsigned int n, const un
     result[myrand-min_rand_int[idx]]++;
     count++;}
 }
+*/
