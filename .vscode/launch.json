@@ -9,7 +9,9 @@
             "name": "CUDA C++: Launch",
             "type": "cuda-gdb",
             "request": "launch",
-            "program": "${workspaceFolder}/build/GPSamplingCUDA"
+            "program": "${workspaceFolder}/build/GPSamplingCUDA",
+            "onAPIError": "stop",
+            "verboseLogging": false
         }
     ]
 }

@@ -22,7 +22,7 @@ int main(int, char**){
     std::uniform_real_distribution<double> unif_dist(0.5, 20);
     // std::normal_distribution<double> temp_dist(1.0, )
 
-    int N = 100;
+    int N = 10;//100;
 
     VectorXd x_real = VectorXd::LinSpaced(N, 0, 1);
     VectorXd noise_vec = VectorXd::Zero(N, 1).unaryExpr([&](double dummy){return dis(gen);});
@@ -43,7 +43,7 @@ int main(int, char**){
     sys_data.N_theta = 5;
     sys_data.N_x = 5;
     sys_data.Rnoise = sigma2_n;
-    sys_data.B = 10;
+    sys_data.B = 20;
     sys_data.X = x_real.data();
     sys_data.Y = y_real.data();
     SMC2(sys_data);

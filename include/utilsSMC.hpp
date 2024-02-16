@@ -20,17 +20,31 @@
 
 using namespace Eigen;
 
+// __host__ __device__
+// MatrixXd computeKernel( Eigen::MatrixXd x1,
+//                         Eigen::MatrixXd x2, 
+//                         const double amplitude, 
+//                         const double length_scale
+//                         );
+
 __host__ __device__
-MatrixXd computeKernel( Eigen::MatrixXd x1,
-                        Eigen::MatrixXd x2, 
-                        const double amplitude, 
-                        const double length_scale
-                        );
+void computeKernel( const double *x1,
+                    const int n,
+                    const double *x2, 
+                    const int m,
+                    const double amplitude, 
+                    const double l,
+                    double *K
+                    );
 __device__
 void cuCholesky(const double *A, const int lda, double *L);
 
+__global__ 
+void setup_curand(curandState *state);
+
 __device__
-void threadBlockDeviceSynchronize(void);
+void print_matrix(const int &m, const int &n, const double *A, const int &lda);
+
 /*
 VectorXd uniform_sampler(curandGenerator_t &gen, int num_samples);
 // VectorXd uniform_sampler(curandGenerator_t &gen, cudaStream_t stream, int num_samples);

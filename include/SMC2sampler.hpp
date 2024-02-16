@@ -79,7 +79,7 @@ void Resample(const cuData &data, double *x_t, double *w_x_t, const int* a);
 __global__
 void MetropolisResampling(curandState_t *global_state, double *weights, const int N_theta, const int iters, int* ancestors);
 __global__
-void PropagateState(curandState_t *state, double *x_t, double *w_x_t, const double *L_t, const cuData &data);
+void PropagateState(curandState_t *global_state, const int T_current, double *x_t, double *w_x_t, double *L, const cuData &data);
 __global__
 void MarginalMetropolisHastings(curandState_t *state, 
                                 const int T_current,

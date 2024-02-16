@@ -1,23 +1,47 @@
 #include "utilsSMC.hpp"
 
-__host__ __device__
-MatrixXd computeKernel( Eigen::MatrixXd x1,
-                        Eigen::MatrixXd x2, 
-                        const double amplitude, 
-                        const double length_scale
-                        )
-{
-    double l = length_scale;
+// __host__ __device__
+// MatrixXd computeKernel( Eigen::MatrixXd x1,
+//                         Eigen::MatrixXd x2, 
+//                         const double amplitude, 
+//                         const double length_scale
+//                         )
+// {
+//     double l = length_scale;
 
-    MatrixXd kernel(x1.rows(), x2.rows()); // Initialize kernel matrix
-    for (int ii = 0; ii < x1.rows(); ii++)
+//     MatrixXd kernel(x1.rows(), x2.rows()); // Initialize kernel matrix
+//     for (int ii = 0; ii < x1.rows(); ii++)
+//     {
+//         for (int jj = 0; jj < x2.rows(); jj++)
+//         {
+//             kernel(ii,jj) = amplitude * amplitude * exp( -0.5 / l / l * (x1.row(ii) - x2.row(jj)) * (x1.row(ii) - x2.row(jj)).transpose() );
+//         }
+//     }
+//     return kernel;
+// };
+
+/**
+ * Compute kernel for unidimensional problems
+*/
+__host__ __device__
+void computeKernel( const double *x1,
+                    const int n,
+                    const double *x2, 
+                    const int m,
+                    const double amplitude, 
+                    const double l,
+                    double *K
+                    )
+{
+    Map<MatrixXd> K_mat(K, n, m);
+    for (int ii = 0; ii < n; ii++)
     {
-        for (int jj = 0; jj < x2.rows(); jj++)
+        for (int jj = 0; jj < m; jj++)
         {
-            kernel(ii,jj) = amplitude * amplitude * exp( -0.5 / l / l * (x1.row(ii) - x2.row(jj)) * (x1.row(ii) - x2.row(jj)).transpose() );
+            K_mat(ii,jj) = amplitude * amplitude * exp( -0.5 / l / l * (x1[ii] - x2[jj]) * (x1[ii] - x2[jj]) );
         }
     }
-    return kernel.matrix();
+    K_mat += 1e-6 * MatrixXd::Identity(n, m);
 };
 
 /**
@@ -27,6 +51,7 @@ __device__
 void cuCholesky(const double *A, const int lda, double *L)
 {
     Map<MatrixXd> L_mat(L, lda, lda);
+    L_mat.setZero();
     Map<const::MatrixXd> A_mat(A, lda, lda);
     for (int i = 0; i < lda; i++) 
     {
@@ -44,14 +69,25 @@ void cuCholesky(const double *A, const int lda, double *L)
     }
 }
 
-__device__
-void threadBlockDeviceSynchronize(void) 
+__global__ 
+void setup_curand(curandState *state)
 {
-//   __syncthreads();
-//   if(threadIdx.x == 0)
-//     cudaDeviceSynchronize();
-//   __syncthreads();
+    // Initialize curand with a different state for each thread
+    int idx = threadIdx.x+blockDim.x*blockIdx.x;
+    curand_init(1234, 0, 0, &state[idx]);
 }
+
+__device__
+void print_matrix(const int &m, const int &n, const double *A, const int &lda) 
+{
+    for (int i = 0; i < m; i++) {
+        for (int j = 0; j < n; j++) {
+            printf("%0.4f ", A[j * lda + i]);
+        }
+        printf("\n");
+    }
+}
+
 /*
 VectorXd mvn_sampler(curandGenerator_t &gen, int num_samples, VectorXd &mean, MatrixXd &cov)
 {
@@ -132,14 +168,6 @@ VectorXd uni_to_multivariate_double(const VectorXd &random_samples, const Vector
     MatrixXd L = cov.llt().matrixL();
     VectorXd out = mean + L * random_samples;
     return out;
-}
-
-__global__ 
-void setup_kernel(curandState *state)
-{
-
-  int idx = threadIdx.x+blockDim.x*blockIdx.x;
-  curand_init(1234, idx, 0, &state[idx]);
 }
 
 __global__ 
