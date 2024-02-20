@@ -18,8 +18,10 @@
 #include <cuda_runtime_api.h>
 #include "utilsSMC.hpp"
 #include "cu_utils.hpp"
+#include "matplotlibcpp_eigen.h"
 
 using namespace Eigen;
+namespace plt = matplotlibcpp;
 
 class Managed {
 public:
@@ -53,6 +55,7 @@ class cuData : public Managed
 
 __global__
 void MetropolisHastingsReject(  curandState_t *state,
+                                const cuData &data,
                                 double *theta,
                                 double *theta_new,
                                 double *x_theta,
@@ -74,7 +77,7 @@ void FinalizePFPMMH(const cuData &data,
                     double *w_x_particles);
 
 __global__
-void Resample(const cuData &data, double *x_t, double *w_x_t, const int* a);
+void PermutateStatesAndWeights(const cuData &data, double *x_t, double *w_x_t, const int* a);
 
 __global__
 void MetropolisResampling(curandState_t *global_state, double *weights, const int N_theta, const int iters, int* ancestors);
@@ -98,15 +101,28 @@ void ParticleFilterPMMH(double *theta,
                         double *x_hat, 
                         double *x_particles, 
                         double *w_x_particles);
+/**
+ * Finalize Particle Filter matrices
+*/
 __global__
-void ParticleFilter(double *theta, 
-                    int T_current, 
+void FinalizePF(const cuData &data,
+                const int T_next,
+                const double *x_predicted,      // PF one-step prediction
+                const double *w_x_predicted,    // PF predicted last-step weights
+                double *mlh_hat,                // PF estimated mlh until step t updated to t+1
+                double *x_hat_theta,            // Updated trajectory at t+1 for each theta
+                double *x_particles,            // N_x particles for next iteration
+                double *w_x_particles);
+
+__global__
+void ParticleFilter(double *theta,                  // [2 x N_theta] Matrix with all thetas
+                    const int T_next, 
                     const cuData &data, 
                     curandState_t *global_state, 
-                    double *mlh_hat, 
-                    VectorXd &x_hat, 
-                    VectorXd &x_particles, 
-                    VectorXd &w_x_particles);
+                    double *mlh_hat,                // [N_theta x 1] Marginal LH for each theta 
+                    double *x_hat,                  // [N x N_theta] Time series for each theta
+                    double *x_particles,            // [N_x x N_theta] N_x particles obtained in the last step
+                    double *w_x_particles);
 
 __global__
 void SMC2_init( curandState *state, 
@@ -117,6 +133,30 @@ void SMC2_init( curandState *state,
                 double *mlh, 
                 double *f_particles, 
                 double *w_f);
+
+__global__
+void PermutateThetaAndWeights(  const cuData &data, 
+                                double *theta,          // [2 x N_theta] matrix of parameters a t=T_current
+                                double *x_hat,          // [N x N_theta] State trajectory t=1:T_current
+                                double *mlh,            // [N_theta x 1] Marginal LH at current time
+                                double *x_particles,    // [N_x x N_theta] N_x particles for each theta
+                                double *w_x_particles,  // [N_x x N_theta] Weights
+                                const int* a);
+
+
+__global__
+void NormalizeWeights(  const cuData &data,
+                        const double *mlh_hat,      // [N_theta x 1] Marginal LH at current time
+                        double *w_theta             // [N_theta x 1] (Normalized) theta weights at time T_next
+                      );
+
+// __global__
+// void ResampleThetaParticles(curandState_t *global_state, 
+//                             const int T_current,
+//                             double *theta_weights,          // [N_theta x N] matrix
+//                             const int N_theta,
+//                             const int iters,
+//                             int* ancestors);
 
 void SMC2(const Data &data);
 
