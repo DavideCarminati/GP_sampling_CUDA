@@ -16,13 +16,13 @@ int main(int, char**){
     // Create function
     std::random_device rd;
     std::mt19937 gen(rd());  
-    double sigma2_n = 0.001 * 0.001;
+    double sigma2_n = 0.01 * 0.01;
     std::normal_distribution<double> dis(0, sqrt(sigma2_n));
     // std::gamma_distribution<double> dis(4.0, 20.0);
     std::uniform_real_distribution<double> unif_dist(0.5, 20);
     // std::normal_distribution<double> temp_dist(1.0, )
 
-    int N = 30;//100;
+    int N = 40;//100;
 
     VectorXd x_real = VectorXd::LinSpaced(N, 0, 1);
     VectorXd noise_vec = VectorXd::Zero(N, 1).unaryExpr([&](double dummy){return dis(gen);});
@@ -40,8 +40,8 @@ int main(int, char**){
 
     Data sys_data;
     sys_data.N = N;
-    sys_data.N_theta = 5;
-    sys_data.N_x = 10;
+    sys_data.N_theta = 16;
+    sys_data.N_x = 64;
     sys_data.Rnoise = sigma2_n;
     sys_data.B = 5000;
     sys_data.X = x_real.data();

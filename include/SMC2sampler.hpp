@@ -54,6 +54,9 @@ class cuData : public Managed
 };
 
 __global__
+void cudaFreePF(double *L, int *a);
+
+__global__
 void MetropolisHastingsReject(  curandState_t *state,
                                 const cuData &data,
                                 double *theta,
@@ -69,12 +72,12 @@ void MetropolisHastingsReject(  curandState_t *state,
 
 __global__
 void FinalizePFPMMH(const cuData &data,
-                    const double *x,
-                    const double *w_x,
-                    double *mlh_hat, 
-                    double *x_hat, 
-                    double *x_particles, 
-                    double *w_x_particles);
+                    double *x,              // [N_x x N] All x-particles for each time instant
+                    double *w_x,            // Matrix of N_x weights for all N steps
+                    double *mlh_hat,        // [1 x 1] Marginal LH referred to this theta vector
+                    double *x_hat,          // [N x 1] Time series for this theta vector
+                    double *x_particles,    // [N_x x 1]
+                    double *w_x_particles); // Vector of only the last N_x weights
 
 __global__
 void PermutateStatesAndWeights(const cuData &data, double *x_t, double *w_x_t, const int* a);
@@ -84,13 +87,14 @@ void MetropolisResampling(curandState_t *global_state, double *weights, const in
 __global__
 void PropagateState(curandState_t *global_state, const int T_current, double *x_t, double *w_x_t, double *L, const cuData &data);
 __global__
-void MarginalMetropolisHastings(curandState_t *state, 
+void MarginalMetropolisHastings(curandState_t *global_state_theta,
+                                curandState_t *global_state_x,
                                 const int T_current,
-                                double *theta, 
-                                double *x_theta, 
-                                double *mlh, 
-                                double *x_particles, 
-                                double *w_x_particles, 
+                                double *theta,                  // [2 x N_theta]
+                                double *x,                      // [N x N_theta]
+                                double *mlh,                    // [N_theta x 1]
+                                double *x_particles,            // [N_x x N_theta]
+                                double *w_x_particles,          // [N_x x N_theta]
                                 const cuData &data);
 __global__
 void ParticleFilterPMMH(double *theta, 
@@ -107,8 +111,8 @@ void ParticleFilterPMMH(double *theta,
 __global__
 void FinalizePF(const cuData &data,
                 const int T_next,
-                const double *x_predicted,      // PF one-step prediction
-                const double *w_x_predicted,    // PF predicted last-step weights
+                double *x_predicted,            // PF one-step prediction
+                double *w_x_predicted,          // PF predicted last-step weights
                 double *mlh_hat,                // PF estimated mlh until step t updated to t+1
                 double *x_hat_theta,            // Updated trajectory at t+1 for each theta
                 double *x_particles,            // N_x particles for next iteration
