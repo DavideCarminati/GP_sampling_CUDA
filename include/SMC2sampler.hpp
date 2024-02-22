@@ -59,6 +59,7 @@ void cudaFreePF(double *L, int *a);
 __global__
 void MetropolisHastingsReject(  curandState_t *state,
                                 const cuData &data,
+                                const int T_current,
                                 double *theta,
                                 double *theta_new,
                                 double *x_theta,
@@ -72,12 +73,14 @@ void MetropolisHastingsReject(  curandState_t *state,
 
 __global__
 void FinalizePFPMMH(const cuData &data,
+                    const int T_current,
                     double *x,              // [N_x x N] All x-particles for each time instant
                     double *w_x,            // Matrix of N_x weights for all N steps
                     double *mlh_hat,        // [1 x 1] Marginal LH referred to this theta vector
                     double *x_hat,          // [N x 1] Time series for this theta vector
                     double *x_particles,    // [N_x x 1]
-                    double *w_x_particles); // Vector of only the last N_x weights
+                    double *w_x_particles   // Vector of only the last N_x weights
+);
 
 __global__
 void PermutateStatesAndWeights(const cuData &data, double *x_t, double *w_x_t, const int* a);

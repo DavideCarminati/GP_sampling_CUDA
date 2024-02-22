@@ -33,6 +33,7 @@ target_compile_options(GPSamplingCUDA PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:
                        --relocatable-device-code=true
                      -gencode arch=compute_61,code=sm_61
                        -diag-suppress 20012 # Suppressing Eigen warnings
+                       -DPLOT=1
                      #   -g  # Debug
                      #    -G # Debug
                        >)

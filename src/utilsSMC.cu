@@ -74,7 +74,7 @@ void setup_curand_theta(curandState *state)
 {
     // Initialize curand with a different state for each thread
     int idx = threadIdx.x+blockDim.x*blockIdx.x;
-    curand_init(1234, idx, idx, &state[idx]);
+    curand_init(1, idx, 0, &state[idx]);
 }
 
 __global__ 
@@ -82,17 +82,19 @@ void setup_curand_x(curandState *state)
 {
     // Initialize curand with a different state for each thread
     int idx = threadIdx.x+blockDim.x*blockIdx.x;
-    curand_init(1234, idx, idx, &state[idx]);
+    curand_init(2, idx, 0, &state[idx]);
 }
 
 __device__
 void print_matrix(const int &m, const int &n, const double *A, const int &lda) 
 {
     for (int i = 0; i < m; i++) {
+        printf("|");
         for (int j = 0; j < n; j++) {
             printf("%0.4f ", A[j * lda + i]);
+            printf("\033[%dG", 8 * j);
         }
-        printf("\n");
+        printf("|\n");
     }
 }
 
