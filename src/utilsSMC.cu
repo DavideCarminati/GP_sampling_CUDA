@@ -74,7 +74,7 @@ void setup_curand_theta(curandState *state)
 {
     // Initialize curand with a different state for each thread
     int idx = threadIdx.x+blockDim.x*blockIdx.x;
-    curand_init(1, idx, 0, &state[idx]);
+    curand_init(1234, idx, 0, &state[idx]);
 }
 
 __global__ 
@@ -82,7 +82,7 @@ void setup_curand_x(curandState *state)
 {
     // Initialize curand with a different state for each thread
     int idx = threadIdx.x+blockDim.x*blockIdx.x;
-    curand_init(2, idx, 0, &state[idx]);
+    curand_init(1234, idx, 0, &state[idx]);
 }
 
 __device__

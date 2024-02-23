@@ -4,7 +4,7 @@ project(GPSamplingCUDA VERSION 0.1.0 LANGUAGES CXX CUDA)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON CACHE INTERNAL "")
 # add_compile_options(-DCMAKE_BUILD_TYPE=Release -DEIGEN_NO_DEBUG -fopenmp)
-set(CMAKE_BUILD_TYPE Release)
+set(CMAKE_BUILD_TYPE Debug)
 
 
 include(CTest)
@@ -21,6 +21,7 @@ include_directories(include/
                     ${CUDA_TOOLKIT_INCLUDE})
 # add_executable(GPSamplingCUDA src/main.cpp src/MHsampler.cu src/PTsampler.cu src/SMC2sampler.cu src/utils.cu)
 add_executable(GPSamplingCUDA src/mainSMC.cpp src/SMC2sampler.cu src/utilsSMC.cu)
+# add_executable(GPSamplingCUDA src/mainSMC.cpp src/SMC2sampler_MT.cu src/utilsSMC_MT.cu)
 
 set_property(TARGET GPSamplingCUDA PROPERTY CUDA_SEPARABLE_COMPILATION ON)
 # https://gitlab.kitware.com/cmake/cmake/-/issues/18265
@@ -33,9 +34,9 @@ target_compile_options(GPSamplingCUDA PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:
                        --relocatable-device-code=true
                      -gencode arch=compute_61,code=sm_61
                        -diag-suppress 20012 # Suppressing Eigen warnings
-                       -DPLOT=1
-                     #   -g  # Debug
-                     #    -G # Debug
+                       -DPLOT=0
+                       -g  # Debug
+                        -G # Debug
                        >)
 target_link_options(GPSamplingCUDA PRIVATE $<DEVICE_LINK:-arch=sm_61>)
 

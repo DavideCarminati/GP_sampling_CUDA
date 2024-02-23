@@ -40,8 +40,8 @@ int main(int, char**){
 
     Data sys_data;
     sys_data.N = N;
-    sys_data.N_theta = 16;
-    sys_data.N_x = 64;
+    sys_data.N_theta = 4;
+    sys_data.N_x = 8;
     sys_data.Rnoise = sigma2_n;
     sys_data.B = 5000;
     sys_data.X = x_real.data();

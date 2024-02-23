@@ -1,8 +1,8 @@
-#include "SMC2sampler.hpp"
+#include "SMC2sampler_MT.hpp"
 
 
-__global__  // CHILD KERNEL FIRST LEVEL
-void MetropolisHastingsReject(  curandState_t *state,
+__global__
+void MetropolisHastingsReject(  curandStateMtgp32 *state,
                                 const cuData &data,
                                 const int T_current,
                                 double *theta,
@@ -20,9 +20,9 @@ void MetropolisHastingsReject(  curandState_t *state,
     if (tid == 0)
     {
         // printf("[MHR] Inside MH reject\n");
-        curandState local_state = state[tid];
+        // curandStateMtgp32 local_state = state[tid];
         // Accept or reject new time series using MH
-        double u = curand_uniform_double(&local_state);
+        double u = curand_uniform_double(&state[tid]);
         if (*mlh_new / *mlh >= u)
         {
             theta[0] = theta_new[0];
@@ -36,7 +36,7 @@ void MetropolisHastingsReject(  curandState_t *state,
             memcpy(w_x_particles, w_x_particles_new, data.data.N_x);
             printf("Accepted.\n");
         }
-        state[tid] = local_state;
+        // state[tid] = local_state;
         cudaFree(theta_new);
         cudaFree(x_theta_new);
         cudaFree(x_particles_new);
@@ -47,9 +47,9 @@ void MetropolisHastingsReject(  curandState_t *state,
 /**
  * Particle rejuvination
 */
-__global__  // PARENT KERNEL
-void MarginalMetropolisHastings(curandState_t *global_state_theta,
-                                curandState_t *global_state_x,
+__global__
+void MarginalMetropolisHastings(curandStateMtgp32 *global_state_theta,
+                                curandStateMtgp32 *global_state_x,
                                 const int T_current,
                                 double *theta,                  // [2 x N_theta]
                                 double *x,                      // [N x N_theta]
@@ -63,19 +63,17 @@ void MarginalMetropolisHastings(curandState_t *global_state_theta,
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
     if (tid < data.data.N_theta)
     {
-        curandState local_state = global_state_theta[tid];
+        // curandStateMtgp32 local_state = global_state_theta[tid];
         Map<MatrixXd> theta_mat(theta, 2, data.data.N_theta);
         Map<MatrixXd> x_mat(x, data.data.N, data.data.N_theta);
         Map<MatrixXd> x_particles_mat(x_particles, data.data.N_x, data.data.N_theta);
         Map<MatrixXd> w_x_particles_mat(w_x_particles, data.data.N_x, data.data.N_theta);
-        // cudaStream_t streamMMH;
-        // cudaStreamCreateWithFlags(&streamMMH, cudaStreamNonBlocking);
     
         // Sample new candidate theta for the new time series
         double *theta_new = new double[2];
-        theta_new[0] = 1.0 + curand_normal_double(&local_state);
-        theta_new[1] = 1.0 + curand_normal_double(&local_state);
-        global_state_theta[tid] = local_state;
+        theta_new[0] = 2.0 + curand_normal_double(&global_state_theta[tid]);
+        theta_new[1] = 2.0 + curand_normal_double(&global_state_theta[tid]);
+        // global_state_theta[tid] = local_state;
         
         double *mlh_new;
         double *x_theta_new, *x_particles_new, *w_x_particles_new;
@@ -84,18 +82,17 @@ void MarginalMetropolisHastings(curandState_t *global_state_theta,
         cudaMalloc((void**)&x_particles_new, sizeof(double) * data.data.N_x);
         cudaMalloc((void**)&w_x_particles_new, sizeof(double) * data.data.N_x);
         cudaMalloc((void**)&mlh_new, sizeof(double));
-        ParticleFilterPMMH<<<1, 1, 0, cudaStreamTailLaunch>>>(theta_new, T_current, data, global_state_x, mlh_new, x_theta_new, x_particles_new, w_x_particles_new);
+        ParticleFilterPMMH<<<1, 1>>>(theta_new, T_current, data, global_state_x, mlh_new, x_theta_new, x_particles_new, w_x_particles_new);
         MetropolisHastingsReject<<<1, 1, 0, cudaStreamTailLaunch>>>
                         (global_state_theta, data, T_current, theta_mat.col(tid).data(), theta_new, x_mat.col(tid).data(), x_theta_new, &mlh[tid], mlh_new, 
                         x_particles_mat.col(tid).data(), x_particles_new, w_x_particles_mat.col(tid).data(), w_x_particles_new);
-        // __syncthreads();
-        // cudaStreamDestroy(streamMMH);
+        __syncthreads();
 
     }
 }
 
-__global__  // CHILD KERNEL SECOND LEVEL
-void PropagateState(curandState_t *global_state,
+__global__
+void PropagateState(curandStateMtgp32 *global_state,
                     const int T_current,            // Time at which prediction is made
                     double *x_t,                    // [N_x x 1] x-particles at T_current
                     double *w_x_t,                  // [N_x x 1] x-weights
@@ -112,21 +109,20 @@ void PropagateState(curandState_t *global_state,
         // print_matrix(data.data.N, data.data.N, L, data.data.N);
         // printf("x particles at time %d\n", T_current);
         // print_matrix(data.data.N_x, 1, x_t, data.data.N_x);
-        curandState local_state = global_state[tid];
+        // curandStateMtgp32 local_state = global_state[tid];
         Map<VectorXd> x_t_vec(x_t, data.data.N_x);
         Map<VectorXd> w_x_t_vec(w_x_t, data.data.N_x);
         Map<MatrixXd> L_mat(L, data.data.N, data.data.N);
     
         VectorXd rand_var(data.data.N);
-        // skipahead(100, global_state);
         for (int ii = 0; ii < data.data.N; ii++)
         {
-            rand_var(ii) = curand_normal_double(&local_state);
+            rand_var(ii) = curand_normal_double(&global_state[tid]);
         }
         // x_t_vec(tid) = L_mat.col(T_current).transpose() * rand_var;
         x_t_vec(tid) = L_mat.row(T_current) * rand_var;
         w_x_t_vec(tid) = exp( -0.5 * log(2 * M_PI * data.data.Rnoise) - 0.5 * pow(data.data.Y[T_current] - x_t_vec(tid), 2) / data.data.Rnoise );
-        global_state[tid] = local_state;
+        // global_state[tid] = local_state;
     }
 }
 
@@ -134,7 +130,7 @@ void PropagateState(curandState_t *global_state,
  * Metropolis Resempling algorithm for creating ancestors
 */
 __global__
-void MetropolisResampling(  curandState_t *global_state, 
+void MetropolisResampling(  curandStateMtgp32 *global_state, 
                             double *weights,                // [N_particles x 1]
                             const int N_particles, 
                             const int iters, 
@@ -146,13 +142,13 @@ void MetropolisResampling(  curandState_t *global_state,
         Map<VectorXi> ancestors_vec(ancestors, N_particles);
         ancestors_vec.setZero();
         // printf("[MR] tid is: %d. N_particles is %d. Iters is %d\n", tid, N_particles, iters);
-        curandState local_state = global_state[tid];
+        // curandStateMtgp32 local_state = global_state[tid];
 
         int k = tid;
         for (int t = 0; t < iters; t++)
         {
-            double u = curand_uniform_double(&local_state);
-            double jd = curand_uniform_double(&local_state);
+            double u = curand_uniform_double(&global_state[tid]);
+            double jd = curand_uniform_double(&global_state[tid]);
             jd *= (N_particles - 1 + 0.999999);
             int j = (int)trunc(jd);
             if ( u <= weights[j] / weights[k] && !isnan(weights[j] / weights[k]) )
@@ -162,7 +158,7 @@ void MetropolisResampling(  curandState_t *global_state,
             ancestors_vec(tid) = k;
 
         }
-        global_state[tid] = local_state;
+        // global_state[tid] = local_state;
     }
 }
 
@@ -248,11 +244,11 @@ void cudaFreePF(double *L, int *a)
 /**
  * Particle Filter Metropolis Hastings (PMMH)
 */
-__global__  // CHILD KERNEL FIRST LEVEL
+__global__
 void ParticleFilterPMMH(double *theta,                  // [2 x 1] One theta vector out of N_theta theta vectors
                         int T_current, 
                         const cuData &data, 
-                        curandState_t *global_state, 
+                        curandStateMtgp32 *global_state, 
                         double *mlh_hat,                // [1 x 1] Marginal LH referred to this particular time series
                         double *x_hat,                  // [(T_current + 1) x 1] Time series referred to this theta vector
                         double *x_particles,            // [N_x x 1] Last x-particles used for propagation
@@ -300,14 +296,14 @@ void ParticleFilterPMMH(double *theta,                  // [2 x 1] One theta vec
         // printf("L is:\n");
         // print_matrix(data.data.N, data.data.N, L.data(), data.data.N);
         VectorXd rand_var(data.data.N_x);
-        curandState local_state = global_state[tid];
-        double f_0 = L(0,0) * curand_normal_double(&local_state);
+        // curandStateMtgp32 local_state = global_state[tid];
+        double f_0 = L(0,0) * curand_normal_double(&global_state[tid]);
         for (int ii = 0; ii < data.data.N_x; ii++)
         {
-            rand_var(ii) = curand_normal_double(&local_state) + f_0;
+            rand_var(ii) = curand_normal_double(&global_state[tid]) + f_0;
         }
         x_mat.col(0) = rand_var;
-        global_state[tid] = local_state;
+        // global_state[tid] = local_state;
         int *a;
         cudaMalloc((void**)&a, sizeof(int) * data.data.N_x);
         // VectorXi a(data.data.N_x);
@@ -376,7 +372,7 @@ __global__
 void ParticleFilter(double *theta,                  // [2 x N_theta] Matrix with all thetas
                     const int T_next, 
                     const cuData &data, 
-                    curandState_t *global_state, 
+                    curandStateMtgp32 *global_state, 
                     double *mlh_hat,                // [N_theta x 1] Marginal LH for each theta 
                     double *x_hat,                  // [N x N_theta] Time series for each theta
                     double *x_particles,            // [N_x x N_theta] N_x particles obtained in the last step
@@ -446,7 +442,7 @@ void ParticleFilter(double *theta,                  // [2 x N_theta] Matrix with
  * Initialize needed quantities
 */
 __global__
-void SMC2_init( curandState *global_state, 
+void SMC2_init( curandStateMtgp32 *global_state, 
                 const cuData &data, 
                 double *theta, 
                 double *w_theta, 
@@ -458,7 +454,7 @@ void SMC2_init( curandState *global_state,
     // Initialize. For each N_theta theta, do the following:
     int tid = threadIdx.x + blockIdx.x * blockDim.x;
     // curand_init(1234, 0, 0, &state[tid]);
-    curandState local_state = global_state[tid];
+    // curandStateMtgp32 local_state = global_state[tid];
     Map<MatrixXd> system_x(data.data.X, data.data.N, 1);
     Map<MatrixXd> f_mat(f, data.data.N, data.data.N_theta);
     Map<VectorXd> mlh_vec(mlh, data.data.N_theta);
@@ -473,7 +469,7 @@ void SMC2_init( curandState *global_state,
         // double *theta = new double[2];
         for (int ii = 0; ii < 2; ii++)
         {
-            theta_mat(ii, tid) = 1.0 + curand_normal_double(&local_state);
+            theta_mat(ii, tid) = 2.0 + curand_normal_double(&global_state[tid]);
         }
         w_theta_mat.col(0) = VectorXd::Ones(data.data.N_theta) / data.data.N_theta;
 
@@ -487,14 +483,14 @@ void SMC2_init( curandState *global_state,
         VectorXd rand_var(data.data.N);
         for (int kk = 0; kk < data.data.N; kk++)
         {
-            rand_var(kk) = curand_normal_double(&local_state);
+            rand_var(kk) = curand_normal_double(&global_state[tid]);
         }
         f_mat(0, tid) = L(0, 0) * rand_var(0);
         __syncthreads();
         // Create the particle ensemble at time=0
         for (int ii = 0; ii < data.data.N_x; ii++)
         {
-            f_particles_mat(ii, tid) = f_mat(0, tid) + curand_normal_double(&local_state);
+            f_particles_mat(ii, tid) = f_mat(0, tid) + curand_normal_double(&global_state[tid]);
         }
         __syncthreads();
         // MatrixXd rand_mat(data.data.N_x, data.data.N_theta);
@@ -510,7 +506,7 @@ void SMC2_init( curandState *global_state,
         // w_f_mat = MatrixXd::Ones(data.data.N_x, data.data.N_theta) / data.data.N_x;
         w_f_mat.setConstant(1.0 / data.data.N_x);
 
-        global_state[tid] = local_state;
+        // global_state[tid] = local_state;
         cudaFree(K);
     }
 }
@@ -577,10 +573,30 @@ void NormalizeWeights(  const cuData &data,
 */
 void SMC2(const Data &data)
 {
-    curandState *devStates_theta, *devStates_x;
+    // Initialize Mersenne-Twister random generator
+    curandStateMtgp32 *devStates_theta, *devStates_x;
+    mtgp32_kernel_params *devKernelParams_theta, *devKernelParams_x;
+    CUDA_CHECK(cudaMalloc((void**)&devStates_theta, sizeof(curandStateMtgp32) * data.N_theta));
+    CUDA_CHECK(cudaMalloc((void**)&devStates_x, sizeof(curandStateMtgp32) * data.N_x));
+    // Setup Mersenne-Twister states
+    CUDA_CHECK(cudaMalloc((void**)&devKernelParams_theta, sizeof(mtgp32_kernel_params)));
+    CUDA_CHECK(cudaMalloc((void**)&devKernelParams_x, sizeof(mtgp32_kernel_params)));
+    /* Reformat from predefined parameter sets to kernel format, */
+    /* and copy kernel parameters to device memory               */
+    CURAND_CHECK(curandMakeMTGP32Constants(mtgp32dc_params_fast_11213, devKernelParams_theta));
+    CURAND_CHECK(curandMakeMTGP32Constants(mtgp32dc_params_fast_11213, devKernelParams_x));
+
+    /* Initialize one state per thread */
+    CURAND_CHECK(curandMakeMTGP32KernelState(devStates_theta,
+                mtgp32dc_params_fast_11213, devKernelParams_theta, data.N_theta, 1234));
+    CURAND_CHECK(curandMakeMTGP32KernelState(devStates_x,
+                mtgp32dc_params_fast_11213, devKernelParams_x, data.N_x, 1234));
+
+
+    // curandStateMtgp32 *devStates_theta, *devStates_x;
     // int totalThreads = 256;// data.N_theta * data.N_x;// 256;
-    CUDA_CHECK(cudaMalloc((void **)&devStates_theta, data.N_theta * sizeof(curandState)));
-    CUDA_CHECK(cudaMalloc((void **)&devStates_x, data.N_x * sizeof(curandState)));
+    // CUDA_CHECK(cudaMalloc((void **)&devStates_theta, data.N_theta * sizeof(curandState)));
+    // CUDA_CHECK(cudaMalloc((void **)&devStates_x, data.N_x * sizeof(curandState)));
     double *dev_theta, *dev_w_theta, *dev_f, *dev_mlh, *dev_f_particles, *dev_w_f;
     int *dev_ancestors;
     CUDA_CHECK(cudaMalloc((void**)&dev_theta, sizeof(double) * 2 * data.N_theta));
@@ -605,8 +621,8 @@ void SMC2(const Data &data)
     Map<VectorXd> system_y(data.Y, data.N);
 
     // Initialize
-    setup_curand_theta<<<1, data.N_theta>>>(devStates_theta);
-    setup_curand_x<<<1, data.N_x>>>(devStates_x);
+    // setup_curand_theta<<<1, data.N_theta>>>(devStates_theta);
+    // setup_curand_x<<<1, data.N_x>>>(devStates_x);
     SMC2_init<<<1, data.N_theta>>>(devStates_theta, *dev_data, dev_theta, dev_w_theta, dev_f, dev_mlh, dev_f_particles, dev_w_f);
     cudaDeviceSynchronize();
     MatrixXd h_f_parts(data.N_x, data.N_theta);
@@ -647,8 +663,8 @@ void SMC2(const Data &data)
         VectorXd h_mlh(data.N_theta);
         CUDA_CHECK(cudaMemcpy(h_mlh.data(), dev_mlh, sizeof(double) * data.N_theta, cudaMemcpyDeviceToHost));
         std::cout << "Mlh at time " << T_next << " is:\n" << h_mlh << std::endl;
-        // CUDA_CHECK(cudaMemcpy(h_f.data(), dev_f, sizeof(double) * data.N * data.N_theta, cudaMemcpyDeviceToHost));
-        // std::cout << "f full:\n" << h_f << std::endl;
+        CUDA_CHECK(cudaMemcpy(h_f.data(), dev_f, sizeof(double) * data.N * data.N_theta, cudaMemcpyDeviceToHost));
+        std::cout << "f full:\n" << h_f << std::endl;
         CUDA_CHECK(cudaMemcpy(f.data(), dev_f, sizeof(double) * data.N * data.N_theta, cudaMemcpyDeviceToHost));
         CUDA_CHECK(cudaMemcpy(theta.data(), dev_theta, sizeof(double) * 2 * data.N_theta, cudaMemcpyDeviceToHost));
         CUDA_CHECK(cudaMemcpy(w_theta.data(), dev_w_theta, sizeof(double) * data.N * data.N_theta, cudaMemcpyDeviceToHost));
