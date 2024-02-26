@@ -41,7 +41,7 @@ void computeKernel( const double *x1,
             K_mat(ii,jj) = amplitude * amplitude * exp( -0.5 / l / l * (x1[ii] - x2[jj]) * (x1[ii] - x2[jj]) );
         }
     }
-    K_mat += 1e-6 * MatrixXd::Identity(n, m);
+    K_mat += 1e-9 * MatrixXd::Identity(n, m);
 };
 
 /**
@@ -65,6 +65,10 @@ void cuCholesky(const double *A, const int lda, double *L)
                 L_mat(i, j) = sqrt(A_mat(i, i) - sum);
             else
                 L_mat(i, j) = (1.0 / L_mat(j, j) * (A_mat(i, j) - sum));
+            if (isnan(L_mat(i, j)))
+            {
+                printf("\x1B[33mWarning: L(%d, %d) is nan\n\x1B[0m", i, j);
+            }
         }   
     }
 }
@@ -74,7 +78,8 @@ void setup_curand_theta(curandState *state)
 {
     // Initialize curand with a different state for each thread
     int idx = threadIdx.x+blockDim.x*blockIdx.x;
-    curand_init(1234, idx, 0, &state[idx]);
+    // curand_init(1234, idx, 0, &state[idx]);
+    curand_init(clock64(), idx, 0, &state[idx]);
 }
 
 __global__ 
@@ -82,19 +87,20 @@ void setup_curand_x(curandState *state)
 {
     // Initialize curand with a different state for each thread
     int idx = threadIdx.x+blockDim.x*blockIdx.x;
-    curand_init(1234, idx, 0, &state[idx]);
+    // curand_init(1234, idx, 0, &state[idx]);
+    curand_init(clock64(), idx, 0, &state[idx]);
 }
 
 __device__
 void print_matrix(const int &m, const int &n, const double *A, const int &lda) 
 {
     for (int i = 0; i < m; i++) {
-        printf("|");
+        // printf("|");
         for (int j = 0; j < n; j++) {
-            printf("%0.4f ", A[j * lda + i]);
-            printf("\033[%dG", 8 * j);
+            printf("%0.2e\033[%dG", A[j * lda + i], 11 * (j + 1));
+            // printf("\033[%dG", 8 * j);
         }
-        printf("|\n");
+        printf("\n");
     }
 }
 

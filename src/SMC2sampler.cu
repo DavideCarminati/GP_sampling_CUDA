@@ -19,7 +19,9 @@ void MetropolisHastingsReject(  curandState_t *state,
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
     if (tid == 0)
     {
-        // printf("[MHR] Inside MH reject\n");
+        #if VERBOSE
+            printf("[MHR] Inside MH reject\n");
+        #endif
         curandState local_state = state[tid];
         // Accept or reject new time series using MH
         double u = curand_uniform_double(&local_state);
@@ -31,9 +33,9 @@ void MetropolisHastingsReject(  curandState_t *state,
             // memcpy(x_theta, x_theta_new, data.data.N);
             // memcpy(x_particles, x_particles_new, data.data.N);
             // memcpy(w_x_particles, w_x_particles_new, data.data.N);
-            memcpy(x_theta, x_theta_new, T_current + 1);
-            memcpy(x_particles, x_particles_new, data.data.N_x);
-            memcpy(w_x_particles, w_x_particles_new, data.data.N_x);
+            memcpy(x_theta, x_theta_new, sizeof(double) * (T_current + 1));
+            memcpy(x_particles, x_particles_new, sizeof(double) * data.data.N_x);
+            memcpy(w_x_particles, w_x_particles_new, sizeof(double) * data.data.N_x);
             printf("Accepted.\n");
         }
         state[tid] = local_state;
@@ -63,6 +65,12 @@ void MarginalMetropolisHastings(curandState_t *global_state_theta,
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
     if (tid < data.data.N_theta)
     {
+        #if VERBOSE
+        if (tid == 0)
+        {
+            printf("[MMH] tid: %d\n", tid);
+        }
+        #endif
         curandState local_state = global_state_theta[tid];
         Map<MatrixXd> theta_mat(theta, 2, data.data.N_theta);
         Map<MatrixXd> x_mat(x, data.data.N, data.data.N_theta);
@@ -73,6 +81,7 @@ void MarginalMetropolisHastings(curandState_t *global_state_theta,
     
         // Sample new candidate theta for the new time series
         double *theta_new = new double[2];
+        // skipahead(50, &local_state);
         theta_new[0] = 1.0 + curand_normal_double(&local_state);
         theta_new[1] = 1.0 + curand_normal_double(&local_state);
         global_state_theta[tid] = local_state;
@@ -105,7 +114,12 @@ void PropagateState(curandState_t *global_state,
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
     if (tid < data.data.N_x)
     {
-        // printf("[PROP] tid %d. Time %d.\n", tid, T_current);
+        #if VERBOSE
+        if (1)//(tid == 0)
+        {
+            printf("[PROP] tid %d. Time %d.\n", tid, T_current);
+        }
+        #endif
         // printf("N is %d\n", data.data.N);
         // printf("T-th row of L is:\n");
         // printf("L: %f\t%f\n", L[0], L[99]);
@@ -126,6 +140,7 @@ void PropagateState(curandState_t *global_state,
         // x_t_vec(tid) = L_mat.col(T_current).transpose() * rand_var;
         x_t_vec(tid) = L_mat.row(T_current) * rand_var;
         w_x_t_vec(tid) = exp( -0.5 * log(2 * M_PI * data.data.Rnoise) - 0.5 * pow(data.data.Y[T_current] - x_t_vec(tid), 2) / data.data.Rnoise );
+        // printf("[PROP] tid %d. Time: %d. w_x_t is %e; x_t is %f; y is %f\n", tid, T_current, w_x_t[tid], x_t[tid], data.data.Y[T_current]);
         global_state[tid] = local_state;
     }
 }
@@ -141,11 +156,17 @@ void MetropolisResampling(  curandState_t *global_state,
                             int* ancestors)                 // [N_particles x 1]
 {
     int tid = blockIdx.x * blockDim.x + threadIdx.x; // Forse solo thread.x? Se no non parallelizza sui blocchi
+    // printf("blockDim = %d; blockIdx = %d; threadIdx = %d\n", blockDim.x, blockIdx.x, threadIdx.x);
     if (tid < N_particles)
     {
         Map<VectorXi> ancestors_vec(ancestors, N_particles);
         ancestors_vec.setZero();
-        // printf("[MR] tid is: %d. N_particles is %d. Iters is %d\n", tid, N_particles, iters);
+        #if VERBOSE
+        if (tid == 0)
+        {
+            printf("[MR] tid is: %d. N_particles is %d. Iters is %d\n", tid, N_particles, iters);
+        }
+        #endif
         curandState local_state = global_state[tid];
 
         int k = tid;
@@ -159,9 +180,10 @@ void MetropolisResampling(  curandState_t *global_state,
             {
                 k = j;
             }
-            ancestors_vec(tid) = k;
+            
 
         }
+        ancestors_vec(tid) = k;
         global_state[tid] = local_state;
     }
 }
@@ -172,25 +194,37 @@ void PermutateStatesAndWeights(const cuData &data, double *x_t, double *w_x_t, c
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
     if (tid < data.data.N_x)
     {
-        // printf("[PERM_STATES] tid = %d\n", tid);
-        // printf("a contains: %d %d %d %d\n", a[0], a[1], a[2], a[3]);
+        #if VERBOSE
+        if (tid == 0)
+        {
+            printf("[PERM_STATES] tid = %d\n", tid);
+        }
+        #endif
+        
+        Map<VectorXd> w_x_t_vec(w_x_t, data.data.N_x);
+        if (w_x_t_vec.sum() < 1e-200)
+        {
+            // If weights are all zero, re-initialize them as 1 / N_x and return.
+            w_x_t[tid] = 1.0 / data.data.N_x;
+            // printf("[PERM_STATES] a contains: %d %d %d %d.\tw_x[tid]: %e; sum(w_x): %e\n", a[0], a[1], a[2], a[3], w_x_t[tid], w_x_t_vec.sum());
+            return;
+        }
+        // printf("[PERM_STATES] a contains: %d %d %d %d.\tw_x[tid]: %e; sum(w_x): %e\n", a[0], a[1], a[2], a[3], w_x_t[tid], w_x_t_vec.sum());
+
         double *x_t_old, *w_x_t_old;
         cudaMalloc((void**)&x_t_old, sizeof(double) * data.data.N_x);
         cudaMalloc((void**)&w_x_t_old, sizeof(double) * data.data.N_x);
-        memcpy(x_t_old, x_t, data.data.N_x);
-        memcpy(w_x_t_old, w_x_t, data.data.N_x);
-        // Oppure parallelizzando: if (tid < N_x)...
+        memcpy(x_t_old, x_t, sizeof(double) * data.data.N_x);
+        memcpy(w_x_t_old, w_x_t, sizeof(double) * data.data.N_x);
+        // cudaMemcpyAsync(x_t_old, x_t, sizeof(double) * data.data.N_x, cudaMemcpyDeviceToDevice);
+        // cudaMemcpyAsync(w_x_t_old, w_x_t, sizeof(double) * data.data.N_x, cudaMemcpyDeviceToDevice);
+        __syncthreads();
+        
         x_t[tid] = x_t_old[a[tid]];
         w_x_t[tid] = w_x_t_old[a[tid]];
+        // printf("[PERM_STATES] w_x_perm[%d]: %e; w_x_t_old[%d]: %e\n", tid, w_x_t[tid], tid, w_x_t_old[tid]);
         cudaFree(x_t_old);
         cudaFree(w_x_t_old);
-        // printf("here %d\n", ii);
-        // for (int ii = 0; ii < data.data.N_x; ii++)
-        // {
-        //     x_t[ii] = x_t_old[a[ii]];
-        //     w_x_t[ii] = w_x_t_old[a[ii]];
-        //     // printf("here %d\n", ii);
-        // }
     }
 }
 
@@ -209,14 +243,18 @@ void FinalizePFPMMH(const cuData &data,
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
     if (tid == 0)
     {
-        // printf("[FIN_PMMH] tid: %d\n", tid);
+        #if VERBOSE
+        printf("[FIN_PMMH] tid: %d\n", tid);
+        #endif
+        // printf("[FIN_PMMH] w_x is:\n");
+        // print_matrix(data.data.N_x, (T_current + 1), w_x, data.data.N_x);
         // Average the states over the weights and return time series, 
         Map<MatrixXd> x_mat(x, data.data.N_x, (T_current + 1));
         Map<MatrixXd> w_x_mat(w_x, data.data.N_x, (T_current + 1));
         // Map<const::VectorXd> mlh_hat_vec(mlh_hat, data.data.N_theta);
-        // printf("x is\n");
+        // printf("[FIN_PMMH] x is\n");
         // print_matrix(data.data.N_x, (T_current + 1), x, data.data.N_x);
-        VectorXd w_x_summed = w_x_mat.colwise().sum();
+        VectorXd w_x_summed = w_x_mat.colwise().sum(); // Along columns: [1 x N_x] vector
         // *mlh_hat = (w_x_mat.colwise().sum() / data.data.N_x).prod();
         *mlh_hat = (w_x_summed / data.data.N_x).prod();
         // Map<VectorXd> x_hat_vec(x_hat, data.data.N);
@@ -225,11 +263,15 @@ void FinalizePFPMMH(const cuData &data,
         Map<VectorXd> w_x_particles_vec(w_x_particles, data.data.N_x);
         
         VectorXd w_x_tmp = w_x_summed.array().inverse();
-        MatrixXd w_hat_normalized = w_x_mat * w_x_tmp.asDiagonal(); //BUG?
+        MatrixXd w_hat_normalized = w_x_mat * w_x_tmp.asDiagonal();
+        // printf("[FIN_PMMH] w_x_normalized is:\n");
+        // print_matrix(data.data.N_x, (T_current + 1), w_hat_normalized.data(), data.data.N_x);
         x_hat_vec = ( w_hat_normalized.array() * x_mat.array() ).colwise().sum();
         // x_hat_vec = ( w_x.array() / w_x.colwise().sum().array() * x.array() ).colwise().sum();
-        x_particles_vec = x_mat.rightCols(1);//BUG
-        w_x_particles_vec = w_x_mat.rightCols(1);//BUG
+        // x_particles_vec = x_mat.rightCols(1);
+        // w_x_particles_vec = w_x_mat.rightCols(1);
+        x_particles_vec = x_mat.col(T_current);
+        w_x_particles_vec = w_x_mat.col(T_current);
         // printf("x_particles:\n");
         // print_matrix(data.data.N_x, 1, x_particles, data.data.N_x);
         cudaFree(x);
@@ -262,7 +304,9 @@ void ParticleFilterPMMH(double *theta,                  // [2 x 1] One theta vec
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
     if (tid == 0)
     {
-        // printf("[PMMH] tid: %d\n", tid);
+        #if VERBOSE
+        printf("[PMMH] tid: %d\n", tid);
+        #endif
         // (Re)Initialize
         double *x, *w_x;
         // cudaMalloc((void**)&x, sizeof(double) * data.data.N_x * data.data.N);
@@ -321,7 +365,6 @@ void ParticleFilterPMMH(double *theta,                  // [2 x 1] One theta vec
             
             // PropagateState<<<1, 16, 0, cudaStreamFireAndForget>>>(global_state, t, x_mat.col(t).data(), w_x_mat.col(t).data(), L.data(), data); // THIS WORKS!
             PropagateState<<<1, data.data.N_x, 0, streamPMMH>>>(global_state, t, x_mat.col(t).data(), w_x_mat.col(t).data(), L.data(), data);
-            __syncthreads();
             
             // Metropolis resampling (__device__ kernel)
 
@@ -352,6 +395,9 @@ void FinalizePF(const cuData &data,
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
     if (tid == 0)
     {
+        #if VERBOSE
+        printf("[FIN_PF] tid: %d\n", tid);
+        #endif
         // Function referred to a single theta pair.
         Map<const::VectorXd> w_x_pred_vec(w_x_predicted, data.data.N_x);
         Map<const::VectorXd> x_pred_vec(x_predicted, data.data.N_x);
@@ -361,8 +407,8 @@ void FinalizePF(const cuData &data,
         double x_t_plus_one = ((w_x_pred_vec.array() * x_pred_vec.array()) / w_x_pred_vec.sum()).sum();
         x_hat_theta_mat(T_next) = x_t_plus_one;
         
-        memcpy(x_particles, x_predicted, data.data.N_x);
-        memcpy(w_x_particles, w_x_predicted, data.data.N_x);
+        memcpy(x_particles, x_predicted, sizeof(double) * data.data.N_x);
+        memcpy(w_x_particles, w_x_predicted, sizeof(double) * data.data.N_x);
         cudaFree(x_predicted);
         cudaFree(w_x_predicted);
     }
@@ -386,6 +432,12 @@ void ParticleFilter(double *theta,                  // [2 x N_theta] Matrix with
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
     if (tid < data.data.N_theta)
     {
+        #if VERBOSE
+        if (tid == 0)
+        {
+            printf("[PF] tid: %d\n", tid);
+        }
+        #endif
         // x_particles are the N_x last-step particles for each N_theta
         Map<MatrixXd> x_particles_mat(x_particles, data.data.N_x, data.data.N_theta);
         Map<MatrixXd> w_x_particles_mat(w_x_particles, data.data.N_x, data.data.N_theta);
@@ -433,11 +485,6 @@ void ParticleFilter(double *theta,                  // [2 x N_theta] Matrix with
                 (data, T_next, x_predicted, w_x_predicted, &mlh_hat[tid], &x_hat[data.data.N * tid], &x_particles[data.data.N_x * tid], &w_x_particles[data.data.N_x * tid]);
 
         cudaFreePF<<<1, 1, 0, cudaStreamTailLaunch>>>(L.data(), a);
-
-        // *mlh_hat = *mlh_hat / data.data.N_x * w_x.sum();
-        // x_hat(T_next) = (w_x.array() * x_hat_new.array() / w_x.sum()).sum();
-        // x_particles = x_hat_new;
-        // w_x_particles = w_x;
     }
 
 }
@@ -526,33 +573,53 @@ void PermutateThetaAndWeights(  const cuData &data,
                                 )
 {
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
-    // __shared__ 
+    // printf("blockDim = %d; blockIdx = %d; threadIdx = %d; tid = %d\n", blockDim.x, blockIdx.x, threadIdx.x, tid);
     if (tid < data.data.N_theta)
     {
         // For each theta, copy the values of input args and then shuffle them using vector a.
-        // printf("[PERM_THETA] Permutate tid = %d\n", tid);
+        #if VERBOSE
+        if (tid == 0)
+        {
+            printf("[PERM_THETA] Permutate tid = %d\n", tid);
+        }
+        #endif
         // printf("a_theta contains: %d %d %d %d\n", a[0], a[1], a[2], a[3]);
-        double *theta_old, *x_hat_old, *mlh_old, *x_particles_old, *w_x_particles_old;
+        double *mlh_old;
+        Map<VectorXd> mlh_vec(mlh, data.data.N_theta);
+        if (mlh_vec.sum() < 1e-100)
+        {
+            mlh[tid] = 1.0 / data.data.N_theta;
+            // printf("Re-initializing theta-weights...\n");
+        }
+        else
+        {
+            cudaMalloc((void**)&mlh_old, sizeof(double) * data.data.N_theta);
+            memcpy(mlh_old, mlh, sizeof(double) * data.data.N_theta);
+            memcpy(&mlh[tid], &mlh_old[a[tid]], sizeof(double));
+            cudaFree(mlh_old);
+        }
+        // printf("[PERM_THETA] a contains: %d %d %d %d.\tmlh[tid]: %e; sum(mlh): %e\n", a[0], a[1], a[2], a[3], mlh[tid], mlh_vec.sum());
+        double *theta_old, *x_hat_old, *x_particles_old, *w_x_particles_old;
         cudaMalloc((void**)&theta_old, sizeof(double) * 2 * data.data.N_theta);
         cudaMalloc((void**)&x_hat_old, sizeof(double) * data.data.N * data.data.N_theta);
-        cudaMalloc((void**)&mlh_old, sizeof(double) * data.data.N_theta);
+        
         cudaMalloc((void**)&x_particles_old, sizeof(double) * data.data.N_x * data.data.N_theta);
         cudaMalloc((void**)&w_x_particles_old, sizeof(double) * data.data.N_x * data.data.N_theta);
         // double theta_old[2 * data.data.N_theta], x_hat_old[data.data.N * data.data.N_theta], mlh_old[data.data.N_theta], x_particles_old[data.data.N_x * data.data.N_theta], w_x_particles_old[data.data.N_x * data.data.N_theta];
         memcpy(theta_old, theta, sizeof(double) * 2 * data.data.N_theta);
         memcpy(x_hat_old, x_hat, sizeof(double) * data.data.N * data.data.N_theta);
-        memcpy(mlh_old, mlh, sizeof(double) * data.data.N_theta);
+        
         memcpy(x_particles_old, x_particles, sizeof(double) * data.data.N_x * data.data.N_theta);
         memcpy(w_x_particles_old, w_x_particles, sizeof(double) * data.data.N_x * data.data.N_theta);
         // Copy elements back to input arguments but shuffled using vector a
         memcpy(&theta[2*tid], &theta_old[2*a[tid]], sizeof(double) * 2);
         memcpy(&x_hat[data.data.N * tid], &x_hat_old[data.data.N * a[tid]], sizeof(double) * data.data.N);
-        memcpy(&mlh[tid], &mlh_old[a[tid]], sizeof(double));
+        
         memcpy(&x_particles[data.data.N_x*tid], &x_particles_old[data.data.N_x*a[tid]], sizeof(double) * data.data.N_x);
         memcpy(&w_x_particles[data.data.N_x*tid], &w_x_particles_old[data.data.N_x*a[tid]], sizeof(double) * data.data.N_x);
         cudaFree(theta_old);
         cudaFree(x_hat_old);
-        cudaFree(mlh_old);
+        
         cudaFree(x_particles_old);
         cudaFree(w_x_particles_old);
     }
@@ -566,6 +633,12 @@ void NormalizeWeights(  const cuData &data,
     int tid = threadIdx.x + blockIdx.x * blockDim.x;
     if (tid < data.data.N_theta)
     {
+        #if VERBOSE
+        if (tid == 0)
+        {
+            printf("[NW] tid: %d\n", tid);
+        }
+        #endif
         Map<const::VectorXd> mlh_hat_vec(mlh_hat, data.data.N_theta);
         double sum_mlh = mlh_hat_vec.sum();
         w_theta[tid] = mlh_hat_vec(tid) / sum_mlh;
@@ -609,9 +682,9 @@ void SMC2(const Data &data)
     setup_curand_x<<<1, data.N_x>>>(devStates_x);
     SMC2_init<<<1, data.N_theta>>>(devStates_theta, *dev_data, dev_theta, dev_w_theta, dev_f, dev_mlh, dev_f_particles, dev_w_f);
     cudaDeviceSynchronize();
-    MatrixXd h_f_parts(data.N_x, data.N_theta);
-    CUDA_CHECK(cudaMemcpy(h_f_parts.data(), dev_f_particles, sizeof(double) * data.N_x * data.N_theta, cudaMemcpyDeviceToHost));
-    std::cout << "dev_w_f after initialization:\n" << h_f_parts << std::endl;
+    // MatrixXd h_f_parts(data.N_x, data.N_theta);
+    // CUDA_CHECK(cudaMemcpy(h_f_parts.data(), dev_f_particles, sizeof(double) * data.N_x * data.N_theta, cudaMemcpyDeviceToHost));
+    // std::cout << "dev_w_f after initialization:\n" << h_f_parts << std::endl;
     VectorXd x_final(data.N);
     #if PLOT
     plt::figure(1);
@@ -624,29 +697,36 @@ void SMC2(const Data &data)
         MatrixXd h_theta(2, data.N_theta), h_f(data.N, data.N_theta);
         // CUDA_CHECK(cudaMemcpy(h_theta.data(), dev_theta, sizeof(double) * 2 * data.N_theta, cudaMemcpyDeviceToHost));
         // std::cout << "Theta non-permutated:\n" << h_theta << std::endl;
+        std::cout << "\x1B[34m============================== Time: " << t << " ==============================\n\x1B[0m";
 
         MetropolisResampling<<<1, data.N_theta>>>(devStates_theta, &dev_w_theta[t * dev_data->data.N_theta], dev_data->data.N_theta, B, dev_ancestors);
-        VectorXi h_a(data.N_theta);
+        // MetropolisResampling<<<data.N_theta, 1>>>(devStates_theta, &dev_w_theta[t * dev_data->data.N_theta], dev_data->data.N_theta, B, dev_ancestors);
+        // VectorXi h_a(data.N_theta);
         // CUDA_CHECK(cudaMemcpy(h_a.data(), dev_ancestors, sizeof(int) * data.N_theta, cudaMemcpyDeviceToHost));
         // std::cout << "Ancestors:\n" << h_a.transpose() << std::endl;
 
-        // ResampleThetaParticles<<<1, 1>>>(devStates, t, dev_w_theta, dev_data->data.N_theta, B, dev_ancestors);
-        PermutateThetaAndWeights<<<1, data.N_theta>>>(*dev_data, dev_theta, dev_f, dev_mlh, dev_f_particles, dev_w_f, dev_ancestors);
-        cudaDeviceSynchronize();
+        // PermutateThetaAndWeights<<<1, data.N_theta>>>(*dev_data, dev_theta, dev_f, dev_mlh, dev_f_particles, dev_w_f, dev_ancestors);
+        PermutateThetaAndWeights<<<data.N_theta, 1>>>(*dev_data, dev_theta, dev_f, dev_mlh, dev_f_particles, dev_w_f, dev_ancestors);
+        // CUDA_CHECK(cudaDeviceSynchronize());
         // CUDA_CHECK(cudaMemcpy(h_theta.data(), dev_theta, sizeof(double) * 2 * data.N_theta, cudaMemcpyDeviceToHost));
         // std::cout << "Theta permutated:\n" << h_theta << std::endl;
 
-        MarginalMetropolisHastings<<<1, data.N_theta>>>(devStates_theta, devStates_x, t, dev_theta, dev_f, dev_mlh, dev_f_particles, dev_w_f, *dev_data);
-        cudaDeviceSynchronize();
+        // MarginalMetropolisHastings<<<1, data.N_theta>>>(devStates_theta, devStates_x, t, dev_theta, dev_f, dev_mlh, dev_f_particles, dev_w_f, *dev_data);
+        MarginalMetropolisHastings<<<data.N_theta, 1>>>(devStates_theta, devStates_x, t, dev_theta, dev_f, dev_mlh, dev_f_particles, dev_w_f, *dev_data);
+        // CUDA_CHECK(cudaDeviceSynchronize());
         const int T_next = t + 1;
-        ParticleFilter<<<1, data.N_theta>>>(dev_theta, T_next, *dev_data, devStates_x, dev_mlh, dev_f, dev_f_particles, dev_w_f);
-        cudaDeviceSynchronize();
-        NormalizeWeights<<<1, data.N_theta>>>(*dev_data, dev_mlh, &dev_w_theta[T_next * dev_data->data.N_theta]);
-        cudaDeviceSynchronize();
+        // ParticleFilter<<<1, data.N_theta>>>(dev_theta, T_next, *dev_data, devStates_x, dev_mlh, dev_f, dev_f_particles, dev_w_f);
+        ParticleFilter<<<data.N_theta, 1>>>(dev_theta, T_next, *dev_data, devStates_x, dev_mlh, dev_f, dev_f_particles, dev_w_f);
+        // CUDA_CHECK(cudaDeviceSynchronize());
+        // NormalizeWeights<<<1, data.N_theta>>>(*dev_data, dev_mlh, &dev_w_theta[T_next * dev_data->data.N_theta]);
+        NormalizeWeights<<<data.N_theta, 1>>>(*dev_data, dev_mlh, &dev_w_theta[T_next * dev_data->data.N_theta]);
+        CUDA_CHECK(cudaDeviceSynchronize());
+        /*
+        CUDA_CHECK(cudaDeviceSynchronize());
 
         VectorXd h_mlh(data.N_theta);
         CUDA_CHECK(cudaMemcpy(h_mlh.data(), dev_mlh, sizeof(double) * data.N_theta, cudaMemcpyDeviceToHost));
-        std::cout << "Mlh at time " << T_next << " is:\n" << h_mlh << std::endl;
+        std::cout << "average mlh at time " << T_next << " is:\n" << h_mlh.mean() << std::endl;
         // CUDA_CHECK(cudaMemcpy(h_f.data(), dev_f, sizeof(double) * data.N * data.N_theta, cudaMemcpyDeviceToHost));
         // std::cout << "f full:\n" << h_f << std::endl;
         CUDA_CHECK(cudaMemcpy(f.data(), dev_f, sizeof(double) * data.N * data.N_theta, cudaMemcpyDeviceToHost));
@@ -656,8 +736,9 @@ void SMC2(const Data &data)
         VectorXd x_hat_all = (w_theta.leftCols(T_next+1).transpose().array() * f.topRows(T_next+1).array()).rowwise().sum();
         std::cout << "x_hat:\n" << x_hat_all.transpose() << std::endl;
         VectorXd theta_hat_all(2);
-        theta_hat_all(0) = (w_theta.col(T_next).array() * theta.row(0).array()).sum();
-        theta_hat_all(1) = (w_theta.col(T_next).array() * theta.row(1).array()).sum();
+        theta_hat_all(0) = (w_theta.col(T_next).array() * theta.row(0).transpose().array()).sum();
+        theta_hat_all(1) = (w_theta.col(T_next).array() * theta.row(1).transpose().array()).sum();
+        std::cout << "Theta is:\n" << theta_hat_all.transpose() << std::endl;*/
 
         #if PLOT
         // plt::figure(1);
@@ -669,7 +750,7 @@ void SMC2(const Data &data)
         plt::figure(1);
         // plt::clf();
         plt::plot(system_x.segment(t, 2), system_y.segment(t, 2), "k+");
-        plt::plot(system_x.segment(t, 2), x_hat_all.segment(t, 2));
+        plt::plot(system_x.segment(t, 2), x_hat_all.segment(t, 2), "b");
         plt::show(false);
 
         plt::figure(2);
@@ -680,17 +761,25 @@ void SMC2(const Data &data)
         plt::plot(t_vec, theta_2, "ro");
         plt::show(false);
         plt::pause(0.05);
-        #endif
+
         x_final.head(T_next) = x_hat_all;
+        #endif
+        
 
         
     }
     std::cout << cudaGetErrorString(cudaGetLastError()) << std::endl;
-    #if PLOT
+    CUDA_CHECK(cudaMemcpy(f.data(), dev_f, sizeof(double) * data.N * data.N_theta, cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(w_theta.data(), dev_w_theta, sizeof(double) * data.N * data.N_theta, cudaMemcpyDeviceToHost));
+
+    VectorXd x_hat_all = (w_theta.transpose().array() * f.array()).rowwise().sum();
+    std::cout << "x_hat:\n" << x_hat_all.transpose() << std::endl;
+    // #if PLOT
     plt::figure(3);
     plt::plot(system_x, system_y, "k+");
-    plt::plot(system_x, x_final);
+    // plt::plot(system_x, x_final);
+    plt::plot(system_x, x_hat_all);
     plt::show(true);
-    #endif
+    // #endif
 
 }
