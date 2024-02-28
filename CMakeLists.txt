@@ -20,7 +20,8 @@ include_directories(include/
                     ${PYTHON_INCLUDE_DIRS}
                     ${CUDA_TOOLKIT_INCLUDE})
 # add_executable(GPSamplingCUDA src/main.cpp src/MHsampler.cu src/PTsampler.cu src/SMC2sampler.cu src/utils.cu)
-add_executable(GPSamplingCUDA src/mainSMC.cpp src/SMC2sampler.cu src/utilsSMC.cu)
+# add_executable(GPSamplingCUDA src/mainSMC.cpp src/SMC2sampler.cu src/utilsSMC.cu)
+add_executable(GPSamplingCUDA src/mainSMC.cpp src/SMC2samplerGraph.cu src/utilsSMC.cu)
 # add_executable(GPSamplingCUDA src/mainSMC.cpp src/SMC2sampler_MT.cu src/utilsSMC_MT.cu)
 
 set_property(TARGET GPSamplingCUDA PROPERTY CUDA_SEPARABLE_COMPILATION ON)
@@ -35,9 +36,10 @@ target_compile_options(GPSamplingCUDA PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:
                      -gencode arch=compute_61,code=sm_61
                        -diag-suppress 20012 # Suppressing Eigen warnings
                        -DPLOT=0
+                       -DFINAL_PLOT=0
                        -DVERBOSE=0
-                     #   -g  # Debug
-                     #    -G # Debug
+                      #  -g  # Debug
+                      #   -G # Debug
                        >)
 target_link_options(GPSamplingCUDA PRIVATE $<DEVICE_LINK:-arch=sm_61>)
 
