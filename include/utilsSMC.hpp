@@ -39,11 +39,11 @@ void computeKernel( const double *x1,
 __device__
 void cuCholesky(const double *A, const int lda, double *L);
 
-__global__ 
-void setup_curand_theta(curandState *state);
-
 __global__
-void setup_curand_x(curandState *state);
+void setup_curand_theta(curandState *state, const int n);
+
+__global__ 
+void setup_curand_x(curandState *state, const int n);
 
 __device__
 void print_matrix(const int &m, const int &n, const double *A, const int &lda);

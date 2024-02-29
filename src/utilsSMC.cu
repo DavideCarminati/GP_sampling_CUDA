@@ -74,21 +74,21 @@ void cuCholesky(const double *A, const int lda, double *L)
 }
 
 __global__ 
-void setup_curand_theta(curandState *state)
+void setup_curand_theta(curandState *state, const int n)
 {
     // Initialize curand with a different state for each thread
     int idx = threadIdx.x+blockDim.x*blockIdx.x;
     // curand_init(1234, idx, 0, &state[idx]);
-    curand_init(clock64(), idx, 0, &state[idx]);
+    curand_init(clock64(), idx + (idx * n), 0, &state[idx + (idx * n)]);
 }
 
 __global__ 
-void setup_curand_x(curandState *state)
+void setup_curand_x(curandState *state, const int n)
 {
     // Initialize curand with a different state for each thread
     int idx = threadIdx.x+blockDim.x*blockIdx.x;
     // curand_init(1234, idx, 0, &state[idx]);
-    curand_init(clock64(), idx, 0, &state[idx]);
+    curand_init(clock64(), idx + (idx * n), 0, &state[idx + (idx * n)]);
 }
 
 __device__

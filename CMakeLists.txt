@@ -30,13 +30,13 @@ set_property(TARGET GPSamplingCUDA PROPERTY CUDA_SEPARABLE_COMPILATION ON)
 # https://cmake.org/cmake/help/git-master/prop_tgt/CUDA_ARCHITECTURES.html
 set_target_properties(GPSamplingCUDA PROPERTIES CUDA_ARCHITECTURES "61")      # Needed for device linking!
 target_compile_options(GPSamplingCUDA PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:
-                       --generate-line-info # for profiling
+                       # --generate-line-info # for profiling
                      #   --use_fast_math
                        --relocatable-device-code=true
                      -gencode arch=compute_61,code=sm_61
                        -diag-suppress 20012 # Suppressing Eigen warnings
                        -DPLOT=0
-                       -DFINAL_PLOT=0
+                       -DFINAL_PLOT=1
                        -DVERBOSE=0
                       #  -g  # Debug
                       #   -G # Debug

@@ -13,6 +13,7 @@
 #include <random>
 #include <stdexcept>
 #include <string>
+#include <chrono>
 
 #include <cuComplex.h>
 #include <cuda_runtime_api.h>
@@ -163,6 +164,19 @@ void NormalizeWeights(  const cuData &data,
                         const double *mlh_hat,      // [N_theta x 1] Marginal LH at current time
                         double *w_theta             // [N_theta x 1] (Normalized) theta weights at time T_next
                       );
+
+__global__
+void SMC2node_init( curandState_t *global_state_theta,
+                    curandState_t *global_state_x,
+                    const cuData &data,
+                    Graph &initial_path_graph,
+                    double *theta,                      // [2 x N_theta]
+                    double *w_theta,                    // [N_theta x N]
+                    double *mlh,                        // [N_theta x 1]
+                    double *f_hat,                      // [N x N_theta]
+                    double *f_particles,                // [N_x x N_theta]
+                    double *w_f                         // [N_x x N_theta]
+                    );
 
 __global__
 void SMC2run(   curandState_t *global_state_theta,

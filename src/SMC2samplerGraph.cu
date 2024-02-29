@@ -635,6 +635,41 @@ void NormalizeWeights(  const cuData &data,
 }
 
 __global__
+void SMC2node_init( curandState_t *global_state_theta,
+                    curandState_t *global_state_x,
+                    const cuData &data,
+                    Graph &initial_path_graph,
+                    double *theta,                      // [2 x N_theta]
+                    double *w_theta,                    // [N_theta x N]
+                    double *mlh,                        // [N_theta x 1]
+                    double *f_hat,                      // [N x N_theta]
+                    double *f_particles,                // [N_x x N_theta]
+                    double *w_f                         // [N_x x N_theta]
+                    )
+{
+    printf("\x1B[34m============================== Start time: %d ==============================\n\x1B[0m", initial_path_graph.current);
+
+    cudaStream_t streamSMCinit;
+    cudaStreamCreateWithFlags(&streamSMCinit, cudaStreamNonBlocking);
+
+    int *ancestors;
+    cudaMalloc((void**)&ancestors, sizeof(int) * data.data.N_theta);
+    MetropolisResampling<<<1, data.data.N_theta, 0, streamSMCinit>>>
+        (global_state_theta, &w_theta[initial_path_graph.current * data.data.N_theta], data.data.N_theta, data.data.B, ancestors);
+        
+    size_t dim_buffer = max(data.data.N * data.data.N_theta, data.data.N_theta * data.data.N_x);
+    PermutateThetaAndWeights<<<1, data.data.N_theta, dim_buffer * sizeof(double), streamSMCinit>>>
+                (data, theta, f_hat, mlh, f_particles, w_f, ancestors); // With shared memory
+        
+        
+    MarginalMetropolisHastings<<<data.data.N_theta, 1, 0, streamSMCinit>>>
+        (global_state_theta, global_state_x, initial_path_graph, theta, f_hat, mlh, f_particles, w_f, data);
+
+    cudaFreePF<<<1, 1, 0, cudaStreamTailLaunch>>>(streamSMCinit, nullptr, ancestors);
+        
+}
+
+__global__
 void SMC2run(   curandState_t *global_state_theta,
                 curandState_t *global_state_x,
                 const cuData &data,
@@ -707,7 +742,7 @@ void SMC2run(   curandState_t *global_state_theta,
 void SMC2(const Data &data)
 {
     curandState *devStates_theta, *devStates_x;
-    // int totalThreads = 256;// data.N_theta * data.N_x;// 256;
+    
     CUDA_CHECK(cudaMalloc((void **)&devStates_theta, data.N_theta * sizeof(curandState)));
     CUDA_CHECK(cudaMalloc((void **)&devStates_x, data.N_x * sizeof(curandState)));
     double *dev_theta, *dev_w_theta, *dev_f, *dev_mlh, *dev_f_particles, *dev_w_f;
@@ -725,9 +760,8 @@ void SMC2(const Data &data)
     std::copy(data.X, data.X + sizeof(double) * data.N, dev_data->data.X);
     CUDA_CHECK(cudaMallocManaged((void**)&(dev_data->data.Y), sizeof(double) * data.N));
     std::copy(data.Y, data.Y + sizeof(double) * data.N, dev_data->data.Y);
-    Graph *dev_initial_graph = new Graph;
 
-    int B = data.B;
+    // int B = data.B;
     MatrixXd w_theta = MatrixXd::Zero(data.N_theta, data.N);
     MatrixXd theta = MatrixXd::Zero(2, data.N_theta);
     MatrixXd f = MatrixXd::Zero(data.N, data.N_theta);
@@ -735,8 +769,8 @@ void SMC2(const Data &data)
     Map<VectorXd> system_y(data.Y, data.N);
 
     // Initialize
-    setup_curand_theta<<<1, data.N_theta>>>(devStates_theta);
-    setup_curand_x<<<1, data.N_x>>>(devStates_x);
+    setup_curand_theta<<<1, data.N_theta>>>(devStates_theta, 0);
+    setup_curand_x<<<1, data.N_x>>>(devStates_x, 0);
     SMC2_init<<<1, data.N_theta>>>(devStates_theta, *dev_data, dev_theta, dev_w_theta, dev_f, dev_mlh, dev_f_particles, dev_w_f);
     cudaDeviceSynchronize();
     // MatrixXd h_f_parts(data.N_x, data.N_theta);
@@ -752,13 +786,93 @@ void SMC2(const Data &data)
     // for (int t = 0; t < data.N - 1; t++)
     // {
 
-        int t = trunc(data.N / 2);
-        dev_initial_graph->first = t;
-        dev_initial_graph->current = t;
+        auto t_begin = std::chrono::system_clock::now();
+        size_t initial_nodes = 3;
+        size_t num_branches = initial_nodes * 2;   // For now, only 2 directions (from center to left + from center to right)
+        VectorXd initial_node_idx(initial_nodes);
+        // Compute the position of the initial nodes
+        // size_t branch_length = trunc((data.N - initial_nodes) / (2 * initial_nodes));
 
-        MatrixXd h_theta(2, data.N_theta), h_f(data.N, data.N_theta);
+        size_t size_intervals = trunc(data.N / initial_nodes);
+        size_t rem = data.N % initial_nodes;
+        VectorXd branch_length(num_branches);
+        int idx = 0, idx_branch = 0;
+        int count = rem;
+        for (int ii = 0; ii < initial_nodes; ii++)
+        {
+            if (count > 0)
+            {
+                // initial_node_idx(idx++) = floor((size_intervals + 1) / 2.0) + (size_intervals + 1) * ii;
+                // branch_length(idx_branch++) = floor((size_intervals + 1) / 2.0);
+                // branch_length(idx_branch++) = floor((size_intervals + 1) / 2.0);
+                initial_node_idx(idx++) = floor((size_intervals) / 2.0)  + (size_intervals + 1) * ii;
+                branch_length(idx_branch++) = floor((size_intervals) / 2.0);
+                if (count > 0)
+                {
+                    branch_length(idx_branch++) = floor((size_intervals) / 2.0) + 1;
+                    count--;
+                }
+                else
+                {
+                    branch_length(idx_branch++) = floor((size_intervals) / 2.0);
+                }
+                
+            }
+            else
+            {
+                initial_node_idx(idx++) = floor((size_intervals) / 2.0) + (size_intervals + 1) * rem + (size_intervals) * (ii - rem);
+                branch_length(idx_branch++) = ceil((size_intervals) / 2.0);
+                branch_length(idx_branch++) = floor((size_intervals) / 2.0);
+            }
+        }
+        
+        
+        std::cout << "Initial node indices:\n" << initial_node_idx.transpose() << " with branch length = " << branch_length.transpose() << std::endl;
+        // return;
+        Graph *dev_initial_graph = new Graph[initial_nodes];
+        CUDA_CHECK(cudaMallocManaged((void**)&dev_initial_graph, initial_nodes * sizeof(Graph)));
+        // std::cout << "sizeof(graph)" << sizeof(Graph);
+        for (int ii = 0; ii < initial_nodes; ii++)
+        {
+            dev_initial_graph[ii].first = initial_node_idx(ii);
+            dev_initial_graph[ii].current = initial_node_idx(ii);
+        }
+        cudaStream_t streamSMC2_nodes[initial_nodes];
+
+        // curandState *devStates_theta, *devStates_x;
+    
+        // CUDA_CHECK(cudaMalloc((void**)&devStates_theta, data.N_theta * sizeof(curandState) * num_branches));
+        // CUDA_CHECK(cudaMalloc((void**)&devStates_x, data.N_x * sizeof(curandState) * num_branches));
+        // int mult;
+        // CUDA_CHECK(cudaMallocManaged((void**)&mult, sizeof(int)));
+        // mult = 0;
+        // for (int n = 0; n < num_branches; n++)
+        // {
+        //     setup_curand_theta<<<1, data.N_theta>>>(devStates_theta, mult);
+        //     setup_curand_x<<<1, data.N_x>>>(devStates_x, mult++);
+        // }
+        // CUDA_CHECK(cudaDeviceSynchronize());
+        // SMC2_init<<<1, data.N_theta>>>(devStates_theta, *dev_data, dev_theta, dev_w_theta, dev_f, dev_mlh, dev_f_particles, dev_w_f);
+
+        for (int n = 0; n < initial_nodes; n++)
+        {
+            CUDA_CHECK(cudaStreamCreateWithFlags(&streamSMC2_nodes[n], cudaStreamNonBlocking));          
+            SMC2node_init<<<1, 1, 0, streamSMC2_nodes[n]>>>
+                (devStates_theta, devStates_x, *dev_data, dev_initial_graph[n], dev_theta, dev_w_theta, dev_mlh, dev_f, dev_f_particles, dev_w_f);
+        }
+        CUDA_CHECK(cudaDeviceSynchronize());
+        // CUDA_CHECK(cudaStreamDestroy(streamSMC2_nodes));
+
+        int t = initial_node_idx(0);
+        // int t = trunc(data.N / 2);
+        // dev_initial_graph->first = t;
+        // dev_initial_graph->current = t;
+
+        // MatrixXd h_theta(2, data.N_theta), h_f(data.N, data.N_theta);
         // CUDA_CHECK(cudaMemcpy(h_theta.data(), dev_theta, sizeof(double) * 2 * data.N_theta, cudaMemcpyDeviceToHost));
         // std::cout << "Theta non-permutated:\n" << h_theta << std::endl;
+
+        /*
         std::cout << "\x1B[34m============================== Time: " << t << " ==============================\n\x1B[0m";
 
         MetropolisResampling<<<1, data.N_theta>>>(devStates_theta, &dev_w_theta[t * dev_data->data.N_theta], dev_data->data.N_theta, B, dev_ancestors);
@@ -781,20 +895,30 @@ void SMC2(const Data &data)
         // MarginalMetropolisHastings<<<1, data.N_theta>>>(devStates_theta, devStates_x, t, dev_theta, dev_f, dev_mlh, dev_f_particles, dev_w_f, *dev_data);
         MarginalMetropolisHastings<<<data.N_theta, 1>>>(devStates_theta, devStates_x, *dev_initial_graph, dev_theta, dev_f, dev_mlh, dev_f_particles, dev_w_f, *dev_data);
         // CUDA_CHECK(cudaDeviceSynchronize());
-        size_t initial_nodes = 2;   // For now, only 2 directions (from center to left + from center to right)
-        Graph *dev_graph = new Graph[initial_nodes];
-        CUDA_CHECK(cudaMallocManaged((void**)&dev_graph, initial_nodes * sizeof(Graph)));
-        dev_graph[0].first      = t;
-        dev_graph[1].first      = t;
-        dev_graph[0].last       = 0;
-        dev_graph[1].last       = data.N - 1;
-        dev_graph[0].direction  = -1;
-        dev_graph[1].direction  = 1;
-        dev_graph[0].current    = t;
-        dev_graph[1].current    = t;
-        cudaStream_t streamSMC2[initial_nodes];
+        
+        */
+        Graph *dev_graph = new Graph[num_branches];
+        CUDA_CHECK(cudaMallocManaged((void**)&dev_graph, num_branches * sizeof(Graph)));
+        // int node_num = 0;
+        for (int ii = 0; ii < num_branches; ii++)
+        {
+            dev_graph[ii].first     = initial_node_idx((int)trunc(ii / 2));
+            dev_graph[ii].direction = ii % 2 ? 1 : -1;
+            dev_graph[ii].last      = initial_node_idx((int)trunc(ii / 2)) + dev_graph[ii].direction * branch_length(ii);
+            printf("direction: %d; last: %d\n", dev_graph[ii].direction, dev_graph[ii].last);
+            dev_graph[ii].current   = dev_graph[ii].first;
+        }
+        // dev_graph[0].first      = t;
+        // dev_graph[1].first      = t;
+        // dev_graph[0].last       = 0;
+        // dev_graph[1].last       = data.N - 1;
+        // dev_graph[0].direction  = -1;
+        // dev_graph[1].direction  = 1;
+        // dev_graph[0].current    = t;
+        // dev_graph[1].current    = t;
+        cudaStream_t streamSMC2[num_branches];
 
-        for (int n = 0; n < initial_nodes; n++)
+        for (int n = 0; n < num_branches; n++)
         {
             // Start kernels
             CUDA_CHECK(cudaStreamCreateWithFlags(&streamSMC2[n], cudaStreamNonBlocking));
@@ -803,6 +927,8 @@ void SMC2(const Data &data)
 
         }
         CUDA_CHECK(cudaDeviceSynchronize());
+        auto t_end = std::chrono::system_clock::now();
+        std::cout << "It took " << std::chrono::duration_cast<std::chrono::milliseconds>(t_end - t_begin).count() << "ms.\n";
         /*
         CUDA_CHECK(cudaDeviceSynchronize());
 
