@@ -14,6 +14,7 @@
 #include <stdexcept>
 #include <string>
 #include <chrono>
+#include <thread>
 
 #include <cuComplex.h>
 #include <cuda_runtime_api.h>
@@ -53,6 +54,14 @@ class Graph : public Managed
     public:
         int first, last, current;
         int direction; // -1 or +1
+};
+
+class Particles : public Managed
+{
+    public:
+        double *particles;
+        double *weights;
+        int num;
 };
 
 class cuData : public Managed
@@ -96,7 +105,7 @@ void PermutateStatesAndWeights(const cuData &data, double *x_t, double *w_x_t, c
 __global__
 void MetropolisResampling(curandState_t *global_state, double *weights, const int N_theta, const int iters, int* ancestors);
 __global__
-void PropagateState(curandState_t *global_state, const int T_current, double *x_t, double *w_x_t, double *L, const cuData &data);
+void PropagateState(curandState_t *global_state, const Graph &graph, const int T_current, double *x_t, double *w_x_t, double *L, const cuData &data);
 __global__
 void MarginalMetropolisHastings(curandState_t *global_state_theta,
                                 curandState_t *global_state_x,
@@ -130,33 +139,42 @@ void FinalizePF(const cuData &data,
                 double *w_x_particles);
 
 __global__
-void ParticleFilter(double *theta,                  // [2 x N_theta] Matrix with all thetas
-                    const int T_next, 
+void ParticleFilter(curandState_t *global_state, 
                     const cuData &data, 
-                    curandState_t *global_state, 
+                    const Graph &graph,
+                    double *theta,                  // [2 x N_theta] Matrix with all thetas
                     double *mlh_hat,                // [N_theta x 1] Marginal LH for each theta 
                     double *x_hat,                  // [N x N_theta] Time series for each theta
                     double *x_particles,            // [N_x x N_theta] N_x particles obtained in the last step
                     double *w_x_particles);
 
 __global__
-void SMC2_init( curandState *state, 
+void SMC2_init( curandState *global_state, 
                 const cuData &data, 
+                const int *initial_nodes_idx,
+                const int num_initial_nodes,
                 double *theta, 
                 double *w_theta, 
                 double *f, 
                 double *mlh, 
-                double *f_particles, 
-                double *w_f);
+                Particles *particles        // N_x f-particles for each theta-particle and for each branch and their weights
+                );
 
 __global__
-void PermutateThetaAndWeights(  const cuData &data, 
-                                double *theta,          // [2 x N_theta] matrix of parameters a t=T_current
-                                double *x_hat,          // [N x N_theta] State trajectory t=1:T_current
-                                double *mlh,            // [N_theta x 1] Marginal LH at current time
-                                double *x_particles,    // [N_x x N_theta] N_x particles for each theta
-                                double *w_x_particles,  // [N_x x N_theta] Weights
-                                const int* a);
+void PermuteThetaAndWeights(const cuData &data, 
+                            const int *a,                   // [N_theta x 1] Ancestors
+                            double *theta,                  // [2 x N_theta] matrix of parameters a t=T_current
+                            double *x_hat,                  // [N x N_theta] State trajectory t=1:T_current
+                            double *mlh,                    // [N_theta x 1] Marginal LH at current time
+                            double *x_particles,            // [N_x x N_theta] N_x particles for each theta
+                            double *w_x_particles,          // [N_x x N_theta] Weights
+                            double *theta_tmp,              // [2 x N_theta] Permuted theta matrix
+                            double *x_hat_tmp,              // [N x N_theta] Permuted state trajectory
+                            double *mlh_tmp,                // [N_theta x 1] Permuted Marginal LH
+                            double *x_particles_tmp,        // [N_x x N_theta] Permuted x-particles
+                            double *w_x_particles_tmp,      // [N_x x N_theta] Permuted x-weights
+                            const bool use_global_mem
+                            );
 
 
 __global__
@@ -192,5 +210,9 @@ void SMC2run(   curandState_t *global_state_theta,
                 );
 
 void SMC2(const Data &data);
+
+// template <typename T, typename... Arguments>
+// __global__
+// void cudaGarbageCollector(T first_ptr, Arguments... ptrs);
 
 #endif

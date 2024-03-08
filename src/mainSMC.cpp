@@ -40,7 +40,7 @@ int main(int, char**){
 
     Data sys_data;
     sys_data.N = N;
-    sys_data.N_theta = 32;
+    sys_data.N_theta = 80;// 512;
     sys_data.N_x = 64;
     sys_data.Rnoise = sigma2_n;
     sys_data.B = 5000;
