@@ -569,6 +569,106 @@ void ParticleFilter(curandState_t *global_state,
 }
 
 /**
+ * @brief Particle smoother
+ * 
+ * @param theta 
+ * @param graph 
+ * @param data 
+ * @param global_state 
+ * @param mlh_hat 
+ * @param x_hat 
+ * @param x_particles 
+ * @param w_x_particles 
+ * @return void
+ */
+
+__global__ 
+void ParticleSmoother(  double *theta,                  // [2 x N_theta] Whole theta vector
+                        double *w_theta,                // [N_theta x N]
+                        const Graph &graph, 
+                        const cuData &data, 
+                        curandState_t *global_state, 
+                        double *mlh_smoothed,           // [1 x 1] Marginal LH referred to this particular time series
+                        double *x_smoothed,             // [(delta_t + 1) x 1] Time series referred to this theta vector
+                        double *x_particles,            // [N_x x 1] Last x-particles used for propagation in this branch
+                        double *w_x_particles)          // [N_x x 1]
+{
+    // This kernel runs for each N_theta theta.
+    extern __shared__ double K[];
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid == 0)
+    {
+        #if VERBOSE
+        printf("[PS] tid: %d; %d --> %d; T_curr: %d\n", tid, graph.first, graph.last, graph.current);
+        #endif
+        // Compute theta values found in the process
+        VectorXd theta_hat(2);
+        Map<MatrixXd> theta_mat(theta, data.data.N_theta, data.data.N);
+        Map<MatrixXd> w_theta_mat(w_theta, data.data.N_theta, data.data.N);
+        theta_hat(0) = (w_theta_mat.array() * theta_mat.row(0).transpose().array()).sum();
+        theta_hat(1) = (w_theta_mat.array() * theta_mat.row(1).transpose().array()).sum();
+        // (Re)Initialize
+        double *x, *w_x;
+        size_t delta_t = abs(graph.last - graph.first);
+        cudaMalloc((void**)&x, sizeof(double) * data.data.N_x * (delta_t + 1));
+        cudaMalloc((void**)&w_x, sizeof(double) * data.data.N_x * (delta_t + 1));
+        
+        Map<MatrixXd> x_mat(x, data.data.N_x, (delta_t + 1));     // x_hat up to t = T_current
+        Map<MatrixXd> w_x_mat(w_x, data.data.N_x, (delta_t + 1));
+        x_mat.setZero();
+        w_x_mat.setZero();
+        w_x_mat.col(0) = VectorXd::Ones(data.data.N_x) / data.data.N_x;
+
+        // K can be built incrementally at each time instant: K = computeKernel(system_x(0:T_current), system_x(0:T_current), theta[0], theta[1]);
+
+        size_t dim_buffer = sizeof(double) * data.data.N * data.data.N;
+        double *L_tmp;
+        cudaMalloc((void**)&L_tmp, sizeof(double) * data.data.N * data.data.N);
+        if (dim_buffer > 48000)
+        {
+            // Use global memory to malloc K since it is too big.
+            double *K_global;
+            cudaMalloc((void**)&K_global, sizeof(double) * data.data.N * data.data.N);
+            computeKernel(data.data.X, data.data.N, data.data.X, data.data.N, theta_hat(0), theta_hat(1), K_global);
+            cuCholesky(K_global, data.data.N, L_tmp);
+            cudaFree(K);
+        }
+        else
+        {
+            computeKernel(data.data.X, data.data.N, data.data.X, data.data.N, theta_hat(0), theta_hat(1), K);
+            cuCholesky(K, data.data.N, L_tmp);
+        }
+
+        Map<MatrixXd> L(L_tmp, data.data.N, data.data.N);
+        curandState local_state = global_state[tid];
+        double f_0 = L(0,0) * curand_normal_double(&local_state);
+        for (int ii = 0; ii < data.data.N_x; ii++)
+        {
+            x_mat(ii, 0) = curand_normal_double(&local_state) + f_0;
+        }
+
+        global_state[tid] = local_state;
+        int *a;
+        cudaMalloc((void**)&a, sizeof(int) * data.data.N_x);
+        cudaStream_t streamPMMH;
+        cudaStreamCreateWithFlags(&streamPMMH, cudaStreamNonBlocking);
+
+        for (int t = delta_t; t >= 0; t--)
+        {
+            PropagateState<<<1, data.data.N_x, 0, streamPMMH>>>(global_state, graph, t, x_mat.col(t).data(), w_x_mat.col(t).data(), L.data(), data);
+
+            MetropolisResampling<<<1, data.data.N_x, 0, streamPMMH>>>(global_state, w_x_mat.col(t).data(), data.data.N_x, data.data.B, a);
+            
+            PermutateStatesAndWeights<<<1, data.data.N_x, sizeof(double) * data.data.N_x, streamPMMH>>>(data, x_mat.col(t).data(), w_x_mat.col(t).data(), a);
+        }
+
+        FinalizePFPMMH<<<1, 1, 0, streamPMMH>>>(data, graph, x_mat.data(), w_x_mat.data(), mlh_smoothed, x_smoothed, x_particles, w_x_particles);
+        cudaFreePF<<<1, 1, 0, cudaStreamTailLaunch>>>(streamPMMH, L.data(), a);
+    }
+
+}
+
+/**
  * Initialize needed quantities
 */
 __global__

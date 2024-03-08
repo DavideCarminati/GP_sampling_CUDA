@@ -148,6 +148,30 @@ void ParticleFilter(curandState_t *global_state,
                     double *x_particles,            // [N_x x N_theta] N_x particles obtained in the last step
                     double *w_x_particles);
 
+/**
+ * @brief Particle smoother
+ * 
+ * @param theta 
+ * @param graph 
+ * @param data 
+ * @param global_state 
+ * @param mlh_hat 
+ * @param x_hat 
+ * @param x_particles 
+ * @param w_x_particles 
+ * @return void
+ */
+__global__ 
+void ParticleSmoother(  double *theta,                  // [2 x 1] One theta vector out of N_theta theta vectors
+                        const Graph &graph, 
+                        const cuData &data, 
+                        curandState_t *global_state, 
+                        double *mlh_hat,                // [1 x 1] Marginal LH referred to this particular time series
+                        double *x_hat,                  // [(T_current + 1) x 1] Time series referred to this theta vector
+                        double *x_particles,            // [N_x x 1] Last x-particles used for propagation
+                        double *w_x_particles           // [N_x x 1]
+);
+
 __global__
 void SMC2_init( curandState *global_state, 
                 const cuData &data, 
