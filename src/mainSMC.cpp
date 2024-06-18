@@ -22,7 +22,7 @@ int main(int, char**){
     std::uniform_real_distribution<double> unif_dist(0.5, 20);
     // std::normal_distribution<double> temp_dist(1.0, )
 
-    int N = 40;//100;
+    int N = 10;//100;
 
     VectorXd x_real = VectorXd::LinSpaced(N, 0, 1);
     VectorXd noise_vec = VectorXd::Zero(N, 1).unaryExpr([&](double dummy){return dis(gen);});
@@ -40,8 +40,8 @@ int main(int, char**){
 
     Data sys_data;
     sys_data.N = N;
-    sys_data.N_theta = 80;// 512;
-    sys_data.N_x = 64;
+    sys_data.N_theta = 2;// 512;
+    sys_data.N_x = 4;
     sys_data.Rnoise = sigma2_n;
     sys_data.B = 5000;
     sys_data.X = x_real.data();

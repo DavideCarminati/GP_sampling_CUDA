@@ -105,7 +105,13 @@ void PermutateStatesAndWeights(const cuData &data, double *x_t, double *w_x_t, c
 __global__
 void MetropolisResampling(curandState_t *global_state, double *weights, const int N_theta, const int iters, int* ancestors);
 __global__
-void PropagateState(curandState_t *global_state, const Graph &graph, const int T_current, double *x_t, double *w_x_t, double *L, const cuData &data);
+void PropagateStatePMMH(curandState_t *global_state,
+                        const Graph &graph,
+                        const int T_current,            // Time at which prediction is made
+                        double *x_t,                    // [N_x x 1] x-particles at T_current
+                        double *w_x_t,                  // [N_x x 1] x-weights
+                        double *L,                      // [N x N] sqrt(K) st dev matrix
+                        const cuData &data);
 __global__
 void MarginalMetropolisHastings(curandState_t *global_state_theta,
                                 curandState_t *global_state_x,
@@ -125,6 +131,15 @@ void ParticleFilterPMMH(double *theta,                  // [2 x 1] One theta vec
                         double *x_hat,                  // [(T_current + 1) x 1] Time series referred to this theta vector
                         double *x_particles,            // [N_x x 1] Last x-particles used for propagation
                         double *w_x_particles);         // [N_x x 1]
+
+__global__
+void PropagateStatePF(  curandState_t *global_state,
+                        const Graph &graph,
+                        double *x_t,                    // [N_x x 1] x-particles at T_current
+                        double *w_x_t,                  // [N_x x 1] x-weights
+                        double *L,                      // [N x N] sqrt(K) st dev matrix
+                        const cuData &data);
+
 /**
  * Finalize Particle Filter matrices
 */
@@ -148,6 +163,17 @@ void ParticleFilter(curandState_t *global_state,
                     double *x_particles,            // [N_x x N_theta] N_x particles obtained in the last step
                     double *w_x_particles);
 
+__global__
+void FinalizePS(const cuData &data,
+                const Graph &graph,
+                double *x,              // [N_x x (T_current + 1)] All x-particles for each time instant
+                double *w_x,            // Matrix of N_x weights for (T_current + 1) steps
+                double *mlh_hat,        // [1 x 1] Marginal LH referred to this theta vector
+                double *x_hat,          // [(T_current + 1) x 1] Time series for this theta vector
+                double *x_particles,    // [N_x x 1]
+                double *w_x_particles   // Vector of only the last N_x weights
+);
+
 /**
  * @brief Particle smoother
  * 
@@ -161,14 +187,15 @@ void ParticleFilter(curandState_t *global_state,
  * @param w_x_particles 
  * @return void
  */
-__global__ 
-void ParticleSmoother(  double *theta,                  // [2 x 1] One theta vector out of N_theta theta vectors
+__global__
+void ParticleSmoother(  double *theta,                  // [2 x N_theta] Whole theta vector
+                        double *w_theta,                // [N_theta x N]
                         const Graph &graph, 
                         const cuData &data, 
                         curandState_t *global_state, 
-                        double *mlh_hat,                // [1 x 1] Marginal LH referred to this particular time series
-                        double *x_hat,                  // [(T_current + 1) x 1] Time series referred to this theta vector
-                        double *x_particles,            // [N_x x 1] Last x-particles used for propagation
+                        double *mlh_smoothed,           // [1 x 1] Marginal LH referred to this particular time series
+                        double *x_smoothed,             // [(delta_t + 1) x 1] Time series referred to this theta vector
+                        double *x_particles,            // [N_x x 1] Last x-particles used for propagation in this branch
                         double *w_x_particles           // [N_x x 1]
 );
 

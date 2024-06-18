@@ -4,7 +4,7 @@ project(GPSamplingCUDA VERSION 0.1.0 LANGUAGES CXX CUDA)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON CACHE INTERNAL "")
 # add_compile_options(-DCMAKE_BUILD_TYPE=Release -DEIGEN_NO_DEBUG -fopenmp)
-set(CMAKE_BUILD_TYPE Release)
+set(CMAKE_BUILD_TYPE Debug)
 
 
 include(CTest)
@@ -29,24 +29,24 @@ set_property(TARGET GPSamplingCUDA PROPERTY CUDA_SEPARABLE_COMPILATION ON)
 # https://cmake.org/cmake/help/git-master/variable/CMAKE_CUDA_ARCHITECTURES.html
 # https://cmake.org/cmake/help/git-master/prop_tgt/CUDA_ARCHITECTURES.html
 # set_target_properties(GPSamplingCUDA PROPERTIES CUDA_ARCHITECTURES "61")      # Needed for device linking!
-set_target_properties(GPSamplingCUDA PROPERTIES CUDA_ARCHITECTURES "75")      # Needed for device linking!
+set_target_properties(GPSamplingCUDA PROPERTIES CUDA_ARCHITECTURES "61;75")      # Needed for device linking!
 target_compile_options(GPSamplingCUDA PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:
                       #  --generate-line-info # for profiling
                      #   --use_fast_math
                        --relocatable-device-code=true
-                    #  -gencode arch=compute_61,code=sm_61
-                    -gencode arch=compute_75,code=sm_75
+                     -gencode arch=compute_61,code=sm_61
+                    # -gencode arch=compute_75,code=sm_75
                        -diag-suppress 20012 # Suppressing Eigen warnings
                        -DPLOT=0
                        -DFINAL_PLOT=1
                        -DVERBOSE=0
-                      #  -g  # Debug
-                      #   -G # Debug
+                       -g  # Debug
+                        -G # Debug
                         # --ptxas-options -v
                         # --resource-usage
                        >)
-# target_link_options(GPSamplingCUDA PRIVATE $<DEVICE_LINK:-arch=sm_61>)
-target_link_options(GPSamplingCUDA PRIVATE $<DEVICE_LINK:-arch=sm_75>)
+target_link_options(GPSamplingCUDA PRIVATE $<DEVICE_LINK:-arch=sm_61>)
+# target_link_options(GPSamplingCUDA PRIVATE $<DEVICE_LINK:-arch=sm_75>)
 
 target_link_libraries(  GPSamplingCUDA
                         Eigen3::Eigen

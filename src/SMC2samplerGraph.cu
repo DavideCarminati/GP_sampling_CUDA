@@ -125,13 +125,13 @@ void MarginalMetropolisHastings(curandState_t *global_state_theta,
 }
 
 __global__  // CHILD KERNEL SECOND LEVEL
-void PropagateState(curandState_t *global_state,
-                    const Graph &graph,
-                    const int T_current,            // Time at which prediction is made
-                    double *x_t,                    // [N_x x 1] x-particles at T_current
-                    double *w_x_t,                  // [N_x x 1] x-weights
-                    double *L,                      // [N x N] sqrt(K) st dev matrix
-                    const cuData &data)
+void PropagateStatePMMH(curandState_t *global_state,
+                        const Graph &graph,
+                        const int T_current,            // Time at which prediction is made
+                        double *x_t,                    // [N_x x 1] x-particles at T_current
+                        double *w_x_t,                  // [N_x x 1] x-weights
+                        double *L,                      // [N x N] sqrt(K) st dev matrix
+                        const cuData &data)
 {
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
     if (tid < data.data.N_x)
@@ -162,10 +162,12 @@ void PropagateState(curandState_t *global_state,
         {
             rand_var_vec(ii) = curand_normal_double(&local_state);
         }
-        
+        int idx = graph.first + graph.direction * T_current;
         // x_t_vec(tid) = L_mat.row(T_current) * rand_var;
-        x_t_vec(tid) = L_mat.row(graph.current) * rand_var_vec;
-        w_x_t_vec(tid) = exp( -0.5 * log(2 * M_PI * data.data.Rnoise) - 0.5 * pow(data.data.Y[graph.current] - x_t_vec(tid), 2) / data.data.Rnoise );
+        // x_t_vec(tid) = L_mat.row(graph.current) * rand_var_vec;
+        x_t_vec(tid) = L_mat.row(idx) * rand_var_vec;
+        // w_x_t_vec(tid) = exp( -0.5 * log(2 * M_PI * data.data.Rnoise) - 0.5 * pow(data.data.Y[graph.current] - x_t_vec(tid), 2) / data.data.Rnoise );
+        w_x_t_vec(tid) = exp( -0.5 * log(2 * M_PI * data.data.Rnoise) - 0.5 * pow(data.data.Y[idx] - x_t_vec(tid), 2) / data.data.Rnoise );
         // printf("[PROP] tid %d. Time: %d (%d). w_x_t is %e; x_t is %f; y is %f\n", tid, graph.current, T_current, w_x_t[tid], x_t[tid], data.data.Y[graph.current]);
         global_state[tid] = local_state;
         cudaFree(rand_var);
@@ -408,7 +410,7 @@ void ParticleFilterPMMH(double *theta,                  // [2 x 1] One theta vec
             // printf("[PMMH] Time instant %d of %d. Launching propagate kernel from thread %d...\n", t, T_current, tid);
             
             // PropagateState<<<1, 16, 0, cudaStreamFireAndForget>>>(global_state, t, x_mat.col(t).data(), w_x_mat.col(t).data(), L.data(), data); // THIS WORKS!
-            PropagateState<<<1, data.data.N_x, 0, streamPMMH>>>(global_state, graph, t, x_mat.col(t).data(), w_x_mat.col(t).data(), L.data(), data);
+            PropagateStatePMMH<<<1, data.data.N_x, 0, streamPMMH>>>(global_state, graph, t, x_mat.col(t).data(), w_x_mat.col(t).data(), L.data(), data);
             
             // Metropolis resampling (__device__ kernel)
 
@@ -425,6 +427,47 @@ void ParticleFilterPMMH(double *theta,                  // [2 x 1] One theta vec
         // __syncthreads();
     }
 
+}
+
+__global__  // CHILD KERNEL SECOND LEVEL
+void PropagateStatePF(  curandState_t *global_state,
+                        const Graph &graph,
+                        double *x_t,                    // [N_x x 1] x-particles at T_current
+                        double *w_x_t,                  // [N_x x 1] x-weights
+                        double *L,                      // [N x N] sqrt(K) st dev matrix
+                        const cuData &data)
+{
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid < data.data.N_x)
+    {
+        #if VERBOSE
+        if (1)//(tid == 0)
+        {
+            printf("[PROP] tid %d. Time %d.\n", tid, T_current);
+        }
+        #endif
+        curandState local_state = global_state[tid];
+        Map<VectorXd> x_t_vec(x_t, data.data.N_x);
+        Map<VectorXd> w_x_t_vec(w_x_t, data.data.N_x);
+        Map<MatrixXd> L_mat(L, data.data.N, data.data.N);
+    
+        double *rand_var;
+        cudaMalloc((void**)&rand_var, sizeof(double) * data.data.N);
+        Map<VectorXd> rand_var_vec(rand_var, data.data.N);
+        
+        for (int ii = 0; ii < data.data.N; ii++)
+        {
+            rand_var_vec(ii) = curand_normal_double(&local_state);
+        }
+        // int idx = graph.first + graph.direction * T_current;
+        x_t_vec(tid) = L_mat.row(graph.current) * rand_var_vec;
+        // x_t_vec(tid) = L_mat.row(idx) * rand_var_vec;
+        w_x_t_vec(tid) = exp( -0.5 * log(2 * M_PI * data.data.Rnoise) - 0.5 * pow(data.data.Y[graph.current] - x_t_vec(tid), 2) / data.data.Rnoise );
+        // w_x_t_vec(tid) = exp( -0.5 * log(2 * M_PI * data.data.Rnoise) - 0.5 * pow(data.data.Y[idx] - x_t_vec(tid), 2) / data.data.Rnoise );
+        
+        global_state[tid] = local_state;
+        cudaFree(rand_var);
+    }
 }
 
 __global__
@@ -550,7 +593,7 @@ void ParticleFilter(curandState_t *global_state,
             printf("[PF] NULL pointers! Out of heap memory!\n");
         }
 
-        PropagateState<<<1, data.data.N_x, 0, streamPF>>>(global_state, graph, graph.current, x_predicted, w_x_predicted, L.data(), data);
+        PropagateStatePF<<<1, data.data.N_x, 0, streamPF>>>(global_state, graph, x_predicted, w_x_predicted, L.data(), data);
         // Metropolis resampling (__device__ kernel)
 
         MetropolisResampling<<<1, data.data.N_x, 0, streamPF>>>(global_state, w_x_predicted, data.data.N_x, data.data.B, a);
@@ -566,6 +609,57 @@ void ParticleFilter(curandState_t *global_state,
         // cudaFreePF<<<1, 1, 0, cudaStreamTailLaunch>>>(streamPF, L.data(), a);
     }
 
+}
+
+__global__
+void FinalizePS(const cuData &data,
+                const Graph &graph,
+                double *x,              // [N_x x (T_current + 1)] All x-particles for each time instant
+                double *w_x,            // Matrix of N_x weights for (T_current + 1) steps
+                double *mlh_hat,        // [1 x 1] Marginal LH referred to this theta vector
+                double *x_hat,          // [(T_current + 1) x 1] Time series for this theta vector
+                double *x_particles,    // [N_x x 1]
+                double *w_x_particles)  // Vector of only the last N_x weights
+{
+    // Transform the N_x x-particles from t=1:T_current into x_hat. 
+    // Compute mlh_hat and save last generated x-particles and weights.
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid == 0)
+    {
+        #if VERBOSE
+        printf("[FIN_PS] tid: %d\n", tid);
+        #endif
+
+        // Average the states over the weights and return time series, 
+        size_t delta_t = abs(graph.current - graph.first);
+        Map<MatrixXd> x_mat(x, data.data.N_x, (delta_t + 1));
+        Map<MatrixXd> w_x_mat(w_x, data.data.N_x, (delta_t + 1));
+        VectorXd w_x_summed = w_x_mat.colwise().sum(); // Along columns: [1 x N_x] vector
+        *mlh_hat = (w_x_summed / data.data.N_x).prod();
+
+        Map<VectorXd> x_hat_vec(x_hat, delta_t + 1);
+        Map<VectorXd> x_particles_vec(x_particles, data.data.N_x);
+        Map<VectorXd> w_x_particles_vec(w_x_particles, data.data.N_x);
+        
+        VectorXd w_x_tmp = w_x_summed.array().inverse();
+        MatrixXd w_hat_normalized = w_x_mat * w_x_tmp.asDiagonal();
+
+        if (graph.direction == -1)
+        {
+            VectorXd x_hat_vec_tmp = ( w_hat_normalized.array() * x_mat.array() ).colwise().sum();
+            x_hat_vec = x_hat_vec_tmp.reverse();
+        }
+        else
+        {
+            x_hat_vec = ( w_hat_normalized.array() * x_mat.array() ).colwise().sum();
+        }
+        // x_particles_vec = x_mat.rightCols(1);
+        // w_x_particles_vec = w_x_mat.rightCols(1);
+        x_particles_vec = x_mat.leftCols(1);
+        w_x_particles_vec = w_x_mat.leftCols(1);
+        cudaFree(x);
+        cudaFree(w_x);
+    }
 }
 
 /**
@@ -590,20 +684,21 @@ void ParticleSmoother(  double *theta,                  // [2 x N_theta] Whole t
                         curandState_t *global_state, 
                         double *mlh_smoothed,           // [1 x 1] Marginal LH referred to this particular time series
                         double *x_smoothed,             // [(delta_t + 1) x 1] Time series referred to this theta vector
-                        double *x_particles,            // [N_x x 1] Last x-particles used for propagation in this branch
-                        double *w_x_particles)          // [N_x x 1]
+                        double *x_particles,            // [N_x x N_theta] Last x-particles used for propagation in this branch
+                        double *w_x_particles)          // [N_x x N_theta]
 {
     // This kernel runs for each N_theta theta.
     extern __shared__ double K[];
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
     if (tid == 0)
     {
+        printf("\x1B[34m============================== Smoothing %d --> %d ==============================\n\x1B[0m", graph.first, graph.last);
         #if VERBOSE
         printf("[PS] tid: %d; %d --> %d; T_curr: %d\n", tid, graph.first, graph.last, graph.current);
         #endif
         // Compute theta values found in the process
         VectorXd theta_hat(2);
-        Map<MatrixXd> theta_mat(theta, data.data.N_theta, data.data.N);
+        Map<MatrixXd> theta_mat(theta, 2, data.data.N_theta);
         Map<MatrixXd> w_theta_mat(w_theta, data.data.N_theta, data.data.N);
         theta_hat(0) = (w_theta_mat.array() * theta_mat.row(0).transpose().array()).sum();
         theta_hat(1) = (w_theta_mat.array() * theta_mat.row(1).transpose().array()).sum();
@@ -616,8 +711,12 @@ void ParticleSmoother(  double *theta,                  // [2 x N_theta] Whole t
         Map<MatrixXd> x_mat(x, data.data.N_x, (delta_t + 1));     // x_hat up to t = T_current
         Map<MatrixXd> w_x_mat(w_x, data.data.N_x, (delta_t + 1));
         x_mat.setZero();
+        Map<MatrixXd> x_particles_mat(x_particles, data.data.N_x, data.data.N_theta);
+        x_mat.rightCols(1) = (x_particles_mat * w_theta_mat.rightCols(1).asDiagonal()).rowwise().sum() / w_theta_mat.rightCols(1).sum();
+
         w_x_mat.setZero();
-        w_x_mat.col(0) = VectorXd::Ones(data.data.N_x) / data.data.N_x;
+        Map<MatrixXd> w_x_particles_mat(w_x_particles, data.data.N_x, data.data.N_theta);
+        w_x_mat.rightCols(1) = (w_x_particles_mat * w_theta_mat.rightCols(1).asDiagonal()).rowwise().sum() / w_theta_mat.rightCols(1).sum();
 
         // K can be built incrementally at each time instant: K = computeKernel(system_x(0:T_current), system_x(0:T_current), theta[0], theta[1]);
 
@@ -640,29 +739,26 @@ void ParticleSmoother(  double *theta,                  // [2 x N_theta] Whole t
         }
 
         Map<MatrixXd> L(L_tmp, data.data.N, data.data.N);
-        curandState local_state = global_state[tid];
-        double f_0 = L(0,0) * curand_normal_double(&local_state);
-        for (int ii = 0; ii < data.data.N_x; ii++)
-        {
-            x_mat(ii, 0) = curand_normal_double(&local_state) + f_0;
-        }
 
-        global_state[tid] = local_state;
         int *a;
         cudaMalloc((void**)&a, sizeof(int) * data.data.N_x);
         cudaStream_t streamPMMH;
         cudaStreamCreateWithFlags(&streamPMMH, cudaStreamNonBlocking);
 
-        for (int t = delta_t; t >= 0; t--)
+        MetropolisResampling<<<1, data.data.N_x, 0, streamPMMH>>>(global_state, w_x_mat.col(delta_t).data(), data.data.N_x, data.data.B, a);
+            
+        PermutateStatesAndWeights<<<1, data.data.N_x, sizeof(double) * data.data.N_x, streamPMMH>>>(data, x_mat.col(delta_t).data(), w_x_mat.col(delta_t).data(), a);
+
+        for (int t = delta_t - 1; t >= 0; t--)
         {
-            PropagateState<<<1, data.data.N_x, 0, streamPMMH>>>(global_state, graph, t, x_mat.col(t).data(), w_x_mat.col(t).data(), L.data(), data);
+            PropagateStatePMMH<<<1, data.data.N_x, 0, streamPMMH>>>(global_state, graph, t, x_mat.col(t).data(), w_x_mat.col(t).data(), L.data(), data);
 
             MetropolisResampling<<<1, data.data.N_x, 0, streamPMMH>>>(global_state, w_x_mat.col(t).data(), data.data.N_x, data.data.B, a);
             
             PermutateStatesAndWeights<<<1, data.data.N_x, sizeof(double) * data.data.N_x, streamPMMH>>>(data, x_mat.col(t).data(), w_x_mat.col(t).data(), a);
         }
 
-        FinalizePFPMMH<<<1, 1, 0, streamPMMH>>>(data, graph, x_mat.data(), w_x_mat.data(), mlh_smoothed, x_smoothed, x_particles, w_x_particles);
+        FinalizePS<<<1, 1, 0, streamPMMH>>>(data, graph, x_mat.data(), w_x_mat.data(), mlh_smoothed, x_smoothed, x_particles, w_x_particles);
         cudaFreePF<<<1, 1, 0, cudaStreamTailLaunch>>>(streamPMMH, L.data(), a);
     }
 
@@ -1089,7 +1185,7 @@ void SMC2run(   curandState_t *global_state_theta,
 */
 void SMC2(const Data &data)
 {
-    CUDA_CHECK(cudaDeviceSetLimit(cudaLimitMallocHeapSize, 2000e6));
+    CUDA_CHECK(cudaDeviceSetLimit(cudaLimitMallocHeapSize, 3000e6));
     curandState *devStates_theta, *devStates_x;
     
     CUDA_CHECK(cudaMalloc((void **)&devStates_theta, data.N_theta * sizeof(curandState)));
@@ -1120,7 +1216,7 @@ void SMC2(const Data &data)
     // Initialize
 
     auto t_begin = std::chrono::system_clock::now();
-    size_t initial_nodes = 3;
+    size_t initial_nodes = 1;
     size_t num_branches = initial_nodes * 2;   // For now, only 2 directions (from center to left + from center to right)
     VectorXi initial_node_idx(initial_nodes);
     // Compute the position of the initial nodes
@@ -1237,11 +1333,17 @@ void SMC2(const Data &data)
     }
 
     cudaStream_t *streamSMC2 = new cudaStream_t[num_branches];
+    for (int n = 0; n < num_branches; n++)
+    {
+        CUDA_CHECK(cudaStreamCreateWithFlags(&streamSMC2[n], cudaStreamNonBlocking));
+    }
+    double *dev_f_smoothed;
+    CUDA_CHECK(cudaMalloc((void**)&dev_f_smoothed, sizeof(double) * data.N));
 
     for (int n = 0; n < num_branches; n++)
     {
         // Start kernels
-        CUDA_CHECK(cudaStreamCreateWithFlags(&streamSMC2[n], cudaStreamNonBlocking));
+        
         // Trying to have different states for each node/branch I'm estimating
         curandState *devStates_theta_run, *devStates_x_run;
     
@@ -1255,6 +1357,20 @@ void SMC2(const Data &data)
         SMC2run<<<1, 1, 0, streamSMC2[n]>>>
                 (devStates_theta_run, devStates_x_run, *dev_data, dev_graph[n], dev_theta, dev_w_theta, dev_mlh, dev_f, dev_particles[n].particles, dev_particles[n].weights);
 
+        // ParticleSmoother<<<1, 1, sizeof(double) * data.N * data.N, streamSMC2[n]>>>
+        //     (dev_theta, dev_w_theta, dev_graph[n], *dev_data, devStates_x_run, dev_mlh, &dev_f_smoothed[dev_graph[n].first], dev_particles[n].particles, dev_particles[n].weights);
+
+
+    }
+    CUDA_CHECK(cudaDeviceSynchronize());
+
+    for (int n = 0; n < num_branches; n++)
+    {
+        curandState *devStates_x_run;
+        CUDA_CHECK(cudaMallocAsync((void **)&devStates_x_run, data.N_x * sizeof(curandState), streamSMC2[n]));
+        setup_curand_x<<<1, data.N_x, 0, streamSMC2[n]>>>(devStates_x_run, 3*n);
+        ParticleSmoother<<<1, 1, sizeof(double) * data.N * data.N, streamSMC2[n]>>>
+            (dev_theta, dev_w_theta, dev_graph[n], *dev_data, devStates_x_run, dev_mlh, &dev_f_smoothed[dev_graph[n].first], dev_particles[n].particles, dev_particles[n].weights);
 
     }
 
@@ -1266,9 +1382,11 @@ void SMC2(const Data &data)
     
     std::cout << cudaGetErrorString(cudaGetLastError()) << std::endl;
     #if FINAL_PLOT
+    VectorXd f_smoothed(data.N);
     CUDA_CHECK(cudaMemcpy(f.data(), dev_f, sizeof(double) * data.N * data.N_theta, cudaMemcpyDeviceToHost));
     CUDA_CHECK(cudaMemcpy(w_theta.data(), dev_w_theta, sizeof(double) * data.N * data.N_theta, cudaMemcpyDeviceToHost));
     CUDA_CHECK(cudaMemcpy(theta.data(), dev_theta, sizeof(double) * 2 * data.N_theta, cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(f_smoothed.data(), dev_f_smoothed, sizeof(double) * data.N, cudaMemcpyDeviceToHost));
 
     VectorXd x_hat_all = (w_theta.transpose().array() * f.array()).rowwise().sum();
     std::cout << "x_hat:\n" << x_hat_all.transpose() << std::endl;
@@ -1283,9 +1401,12 @@ void SMC2(const Data &data)
     MatrixXd nodes(initial_nodes, 2);
     nodes << system_x(initial_node_idx), system_y(initial_node_idx);
     plt::plot(nodes.col(0), nodes.col(1), "ro");
+    plt::plot(system_x, f_smoothed, "b--");
     // plt::plot(system_x, x_final);
     plt::plot(system_x, x_hat_all);
     plt::show(true);
     #endif
+
+    CUDA_CHECK(cudaDeviceReset());
 
 }
